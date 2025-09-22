@@ -12,8 +12,7 @@ LOGGER.addHandler(logging.NullHandler())
 NOWRAP = (int, float, str, bool, bytes, tuple, frozenset, type(None))
 KLASSES = {}
 ON_CHANGE = Callable[[Any, Any, Any], None]
-
-Sentinal = object()
+SENTINAL = object()
 
 
 def maybe_make_klass(value, attrs):
@@ -99,13 +98,13 @@ def __delitem__(self, key):
     self.on_change(f'[{key}]', old, None)
 
 
-def pop(self, i=-1, default=Sentinal):
+def pop(self, i=-1, default=SENTINAL):
     try:
         old = value = super(type(self), self).pop(i)
 
     except KeyError:
         old = None
-        if default is Sentinal:
+        if default is SENTINAL:
             raise
         value = default
 
