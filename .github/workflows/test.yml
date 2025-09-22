@@ -67,7 +67,7 @@ jobs:
 
       - name: Get version
         id: get-version
-        run: make version | grep current_version  >> $GITHUB_OUTPUT
+        run: make version | grep current_version\= >> $GITHUB_OUTPUT
 
       - name: Build package
         run: make package
