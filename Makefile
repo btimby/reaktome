@@ -29,3 +29,8 @@ package: .venv
 
 publish: package
 	uv run twine upload dist/*
+
+
+.PHONY: clean
+clean:
+	rm -rf dist
