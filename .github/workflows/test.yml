@@ -1,0 +1,92 @@
+name: Create release
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - closed
+    branches:
+      - master
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@master
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10.12'
+
+      - name: Lint
+        run: make lint
+
+      - name: Test
+        run: make test
+
+      - name: MyPy
+        run: make mypy
+
+  release:
+    runs-on: ubuntu-latest
+    needs:
+      - test
+    if: github.event.pull_request.merged == true
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@master
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10.12'
+
+      - name: Set up git
+        run: |
+          git config user.email "${GITHUB_ACTOR}@users.noreply.github.com"
+          git config user.name "${GITHUB_ACTOR}"
+
+      - name: Increment version
+        run: make bump
+
+      - name: Get version
+        id: get-version
+        run: uv run bumpversion --dry-run --allow-dirty --list patch  | grep current_version >> $GITHUB_OUTPUT
+
+      - name: Build package
+        run: make package
+
+      - name: Git checkin
+        env:
+          VERSION: ${{ steps.get-version.outputs.current_version }}
+        run: git commit -am "v${VERSION}"
+
+      - name: Git push
+        uses: ad-m/github-push-action@master
+        with:
+          github_token: ${{ secrets.PERSONAL_TOKEN }}
+          force: true
+
+      - name: Create prerelease
+        uses: ncipollo/release-action@v1
+        with:
+          tag: v${{ steps.get-version.outputs.current_version }}
+          prerelease: true
+          body: ${{ github.event.pull_request.title }}
+          # token: ${{ secrets.PERSONAL_TOKEN }}
+          artifacts: dist/reaktome-${{ steps.get-version.outputs.current_version }}-py3-none-any.whl
+
+      - name: Publish
+        env:
+          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+        run: make publish

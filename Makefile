@@ -3,7 +3,7 @@
 
 
 test: .venv/
-	uv run python3 -m unittest test_reaktome.py
+	uv run python3 -m unittest tests/test_*.py
 
 
 lint: .venv/
@@ -12,3 +12,15 @@ lint: .venv/
 
 mypy: .venv/
 	uv run mypy ./reaktome
+
+
+bump: .venv
+	uv run bumpversion patch
+
+
+package: .venv
+	uv run python3 -m build --wheel
+
+
+publish: package
+	uv run twine upload dist/*
