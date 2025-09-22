@@ -185,6 +185,7 @@ class ReaktomeList(list):
     extend = extend
 
     def __init__(self, value, on_change):
+        super().__init__(value)
         self.on_change = on_change
 
 
@@ -199,6 +200,7 @@ class ReaktomeDict(dict):
     update = update
 
     def __init__(self, value, on_change):
+        super().__init__(value)
         self.on_change = on_change
 
 
