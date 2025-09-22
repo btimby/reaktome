@@ -1,21 +1,26 @@
-.venv/: pyproject.toml
+.venv: pyproject.toml
 	uv sync
+	touch .venv
 
 
-test: .venv/
+test: .venv
 	uv run python3 -m unittest tests/test_*.py
 
 
-lint: .venv/
+lint: .venv
 	uv run flake8 ./reaktome
 
 
-mypy: .venv/
+mypy: .venv
 	uv run mypy ./reaktome
 
 
 bump: .venv
 	uv run bumpversion patch
+
+
+version: .venv
+	uv run bumpversion --dry-run --allow-dirty --list patch | grep current_version
 
 
 package: .venv

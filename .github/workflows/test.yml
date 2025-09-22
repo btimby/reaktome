@@ -61,7 +61,7 @@ jobs:
 
       - name: Get version
         id: get-version
-        run: uv run bumpversion --dry-run --allow-dirty --list patch  | grep current_version >> $GITHUB_OUTPUT
+        run: make version | grep current_version  >> $GITHUB_OUTPUT
 
       - name: Build package
         run: make package
