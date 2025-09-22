@@ -1,10 +1,8 @@
-import re
 import logging
 
-from typing import Any, Callable, Self, Union
+from typing import Any, Callable, Union
 from collections import defaultdict
 from weakref import WeakMethod
-from dataclasses import is_dataclass
 from functools import wraps
 
 
@@ -13,6 +11,7 @@ LOGGER.addHandler(logging.NullHandler())
 
 NOWRAP = (int, float, str, bool, bytes, tuple, frozenset, type(None))
 KLASSES = {}
+ON_CHANGE = Callable[[Any, Any, Any], None]
 
 Sentinal = object()
 
@@ -29,7 +28,10 @@ def maybe_make_klass(value, attrs):
     return KLASSES[base]
 
 
-def reaktiv8(value: Any, on_change: Callable[[Any, Any], None], path: str = '') -> Any:
+def reaktiv8(value: Any,
+             on_change: ON_CHANGE,
+             path: str = '',
+             ) -> Any:
     """Wrap dicts/lists with reactive containers recursively"""
     if hasattr(value, '_is_reaktome'):
         return value
@@ -110,6 +112,7 @@ def pop(self, i=-1, default=Sentinal):
     if old is not None:
         self.on_change(f'[{i}]', old, None)
     return value
+
 
 def remove(self, value):
     i = self.index(value)
@@ -214,13 +217,15 @@ class DeadWatcher(Exception):
 
 
 class ReaktomeWatcher:
-    def __init__(self, cb: Callable[[Any, Any], None]) -> None:
+    def __init__(self, cb: ON_CHANGE) -> None:
+        self.cb: Union[WeakMethod[ON_CHANGE], ON_CHANGE]
         if getattr(cb, '__self__', None) is not None:
             # NOTE: cb is a method, use a Weakref
-            cb = WeakMethod(cb)
-        self.cb = cb
+            self.cb = WeakMethod(cb)
+        else:
+            self.cb = cb
 
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+    def __call__(self, name: str, old: Any, new: Any) -> Any:
         if isinstance(self.cb, WeakMethod):
             cb = self.cb()
             if cb is None:
@@ -229,7 +234,7 @@ class ReaktomeWatcher:
         else:
             cb = self.cb
 
-        return cb(*args, **kwargs)
+        return cb(name, old, new)
 
 
 def ensure_watchers(f):
@@ -243,9 +248,12 @@ def ensure_watchers(f):
 
 class Reaktome(metaclass=ReaktomeMeta):
     @ensure_watchers
-    def on(self, path: str, cb: Callable[[Any, Any], None]) -> tuple[str, ReaktomeWatcher]:
+    def on(self,
+           path: str,
+           cb: ON_CHANGE,
+           ) -> tuple[str, ReaktomeWatcher]:
         watcher = ReaktomeWatcher(cb)
-        self._watchers[path].add(watcher)
+        self._watchers[path].add(watcher)  # type: ignore
         return (path, watcher)
 
     @ensure_watchers
@@ -257,7 +265,7 @@ class Reaktome(metaclass=ReaktomeMeta):
             raise ValueError('Invalid handle: %s', path_cb)
 
         try:
-            self._watchers[path].discard(watcher)
+            self._watchers[path].discard(watcher)  # type: ignore
 
         except ValueError:
             pass
