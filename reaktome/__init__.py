@@ -68,39 +68,48 @@ def reaktiv8(value: Any,
 
 
 def __setattr__(self, name, value):
+    has_changed = False
     old = getattr(self, name, None)
-    if name.startswith('_') or callable(value):
+    if not name.startswith('_') and not callable(value):
+        value = reaktiv8(value, on_change=self.on_change, path=name)
+        has_changed = True
+
+    if ((isinstance(self, (ReaktomeDict, ReaktomeList))
+         and hasattr(self, '_target'))):
+        self._target.__setattr__(name, value)
+
+    else:
         object.__setattr__(self, name, value)
-        return
-    value = reaktiv8(value, on_change=self.on_change, path=name)
-    object.__setattr__(self, name, value)
-    self.on_change(name, old, value)
+
+    if has_changed:
+        self.on_change(name, old, value)
 
 
 def __setitem__(self, key, value):
     if (isinstance(key, str) and key.startswith('_')) or callable(value):
-        super().__setitem__(key, value)
+        self._target[key] = value
         return
 
+    value = reaktiv8(value, on_change=self.on_change, path=f'[{key}]')
     try:
         old = self[key]
 
     except KeyError:
         old = None
 
-    super(type(self), self).__setitem__(key, value)
+    self._target.__setitem__(key, value)
     self.on_change(f'[{key}]', old, value)
 
 
 def __delitem__(self, key):
-    old = self[key]
-    super(type(self), self).__delitem__(key)
+    old = self._target[key]
+    self._target.__delitem__(key)
     self.on_change(f'[{key}]', old, None)
 
 
 def pop(self, i=-1, default=SENTINAL):
     try:
-        old = value = super(type(self), self).pop(i)
+        old = value = self._target.pop(i)
 
     except KeyError:
         old = None
@@ -114,44 +123,44 @@ def pop(self, i=-1, default=SENTINAL):
 
 
 def remove(self, value):
-    i = self.index(value)
-    old = self[i]
-    super(type(self), self).remove(value)
+    i = self._target.index(value)
+    old = self._target[i]
+    self._target.remove(value)
     self.on_change(f'[{i}]', old, None)
 
 
 def append(self, value):
-    i = len(self)
+    i = len(self._target)
     value = reaktiv8(value, on_change=self.on_change, path=f'[{i}]')
-    super(type(self), self).append(value)
+    self._target.append(value)
     self.on_change(f'[{i}]', None, value)
 
 
 def insert(self, i, value):
     value = reaktiv8(value, on_change=self.on_change, path=f'[{i}]')
-    super(type(self), self).insert(i, value)
+    self._target.insert(i, value)
     self.on_change(f'[{i}]', None, value)
 
 
 def extend(self, iterable):
-    i = len(self)
+    i = len(self._target)
     iterable = [
         reaktiv8(value, on_change=self.on_change, path=f'[{i + ii}]')
         for ii, value in enumerate(iterable)
     ]
-    super(type(self), self).extend(iterable)
-    self.on_change(f'[{i:i+len(iterable)}]', None, iterable)
+    self._target.extend(iterable)
+    self.on_change(f'[{i}:{i+len(iterable)}]', None, iterable)
 
 
 def popitem(self):
-    k, v = super(type(self), self).popitem()
+    k, v = self._target.popitem()
     self.on_change(f'[{k}]', v, None)
     return k, v
 
 
 def setdefault(self, key, default=None):
     old = self.get(key)
-    super(type(self), self).setdefault(key, default)
+    self._target.setdefault(key, default)
     self.on_change(f'[{key}]', old, default)
     return default
 
@@ -169,15 +178,34 @@ def update(self, *args, **kwargs):
         keys.append(k)
         old.append(self.get(k))
         new.append(reaktiv8(v, on_change=self.on_change, path=f'[{k}]'))
-    super(type(self), self).update(zip(keys, new))
+    self._target.update(zip(keys, new))
     self.on_change(f'[{",".join(keys)}]', old, new)
 
 
-class ReaktomeList(list):
+def __getattr__(self, *args) -> Any:
+    try:
+        return getattr(self.__dict__['_target'], *args)
+
+    except KeyError:
+        raise AttributeError(args[0])
+
+
+def __getitem__(self, name):
+    return self._target[name]
+
+
+def __len__(self):
+    return len(self._target)
+
+
+class ReaktomeList:
     _is_reaktome = True
     __setattr__ = __setattr__
     __setitem__ = __setitem__
     __delitem__ = __delitem__
+    __getattr__ = __getattr__
+    __getitem__ = __getitem__
+    __len__ = __len__
     pop = pop
     append = append
     remove = remove
@@ -185,23 +213,28 @@ class ReaktomeList(list):
     extend = extend
 
     def __init__(self, value, on_change):
-        super().__init__(value)
         self.on_change = on_change
+        self._target = value
+        super().__init__()
 
 
-class ReaktomeDict(dict):
+class ReaktomeDict:
     _is_reaktome = True
     __setattr__ = __setattr__
     __setitem__ = __setitem__
     __delitem__ = __delitem__
+    __getattr__ = __getattr__
+    __getitem__ = __getitem__
+    __len__ = __len__
     pop = pop
     popitem = popitem
     setdefault = setdefault
     update = update
 
     def __init__(self, value, on_change):
-        super().__init__(value)
         self.on_change = on_change
+        self._target = value
+        super().__init__()
 
 
 class ReaktomeMeta(type):
