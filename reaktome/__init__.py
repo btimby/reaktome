@@ -23,8 +23,12 @@ def maybe_make_klass(value, attrs):
         '_is_reaktome': True,
     })
     if base not in KLASSES:
-        KLASSES[base] = type(name, (base,), attrs)
+        KLASSES[base] = type(name, (base, _ReaktomeBase), attrs)
     return KLASSES[base]
+
+
+class _ReaktomeBase:
+    pass
 
 
 def reaktiv8(value: Any,
@@ -32,7 +36,10 @@ def reaktiv8(value: Any,
              path: str = '',
              ) -> Any:
     """Wrap dicts/lists with reactive containers recursively"""
-    if hasattr(value, '_is_reaktome'):
+    # if hasattr(value, '_is_reaktome'):
+    #     return value
+
+    if isinstance(value, (ReaktomeDict, ReaktomeList, _ReaktomeBase)):
         return value
 
     if isinstance(value, NOWRAP):
@@ -61,7 +68,8 @@ def reaktiv8(value: Any,
             value.__dict__[k] = v
 
         value.__class__ = maybe_make_klass(value, {
-            '__setitem__': __setitem__,
+            '__setattr__': __setattr__,
+            'on_change': lambda self, path, old, new: _on_change(path, old, new),
         })
 
     return value
@@ -71,7 +79,7 @@ def __setattr__(self, name, value):
     has_changed = False
     old = getattr(self, name, None)
     if not name.startswith('_') and not callable(value):
-        value = reaktiv8(value, on_change=self.on_change, path=name)
+        value = reaktiv8(value, on_change=self.on_change, path=f'.{name}')
         has_changed = True
 
     if ((isinstance(self, (ReaktomeDict, ReaktomeList))
@@ -82,7 +90,7 @@ def __setattr__(self, name, value):
         object.__setattr__(self, name, value)
 
     if has_changed:
-        self.on_change(name, old, value)
+        self.on_change(f'.{name}', old, value)
 
 
 def __setitem__(self, key, value):
@@ -280,7 +288,7 @@ def ensure_watchers(f):
     return inner
 
 
-class Reaktome(metaclass=ReaktomeMeta):
+class ReaktomeWatch:
     @ensure_watchers
     def on(self,
            path: str,
@@ -307,7 +315,7 @@ class Reaktome(metaclass=ReaktomeMeta):
     @ensure_watchers
     def on_change(self, path, old=None, new=None):
         """Hook to respond to all attribute/item changes"""
-        LOGGER.debug(f"⚡ Change → {path}: {old} -> {new}")
+        LOGGER.debug(f"⚡ Change → {path}: {old} → {new}")
         dead = []
 
         watchers = [
@@ -326,9 +334,5 @@ class Reaktome(metaclass=ReaktomeMeta):
             self._watchers[path].discard(watcher)
 
 
-def on(obj: Any, path: str) -> Callable[[Callable], Callable]:
-    def wrapped(f):
-        obj.on(path, f)
-        return f
-
-    return wrapped
+class Reaktome(ReaktomeWatch, metaclass=ReaktomeMeta):
+    pass
