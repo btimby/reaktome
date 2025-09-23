@@ -74,7 +74,8 @@ def __setattr__(self, name, value):
         value = reaktiv8(value, on_change=self.on_change, path=name)
         has_changed = True
 
-    if isinstance(self, (ReaktomeDict, ReaktomeList)) and hasattr(self, '_target'):
+    if ((isinstance(self, (ReaktomeDict, ReaktomeList))
+         and hasattr(self, '_target'))):
         self._target.__setattr__(name, value)
 
     else:
@@ -181,12 +182,12 @@ def update(self, *args, **kwargs):
     self.on_change(f'[{",".join(keys)}]', old, new)
 
 
-def __getattr__(self, name):
+def __getattr__(self, *args) -> Any:
     try:
-        return getattr(self.__dict__['_target'], name)
+        return getattr(self.__dict__['_target'], *args)
 
     except KeyError:
-        raise AttributeError(name)
+        raise AttributeError(args[0])
 
 
 def __getitem__(self, name):
