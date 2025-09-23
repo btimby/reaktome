@@ -30,6 +30,8 @@ class ReaktomeTestCase(unittest.TestCase):
         top.on('name', handler0)
         top.on('names[foo]', handler1)
         top.name = 'bar'
+        top.items.extend([[], []])
+        top.items[0].append(1)
         top.names['foo'] = []
         top.names['foo'].append('bar')
         top.names['foo'].append('baz')
