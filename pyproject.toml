@@ -12,5 +12,7 @@ dev = [
     "bump2version>=1.0.1",
     "flake8>=7.3.0",
     "mypy>=1.18.2",
+    "pydantic>=2.11.9",
+    "pydantic-collections>=0.6.0",
     "twine>=6.2.0",
 ]
