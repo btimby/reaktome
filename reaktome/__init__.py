@@ -3,7 +3,6 @@ import logging
 from typing import Any, Callable, Union
 from collections import defaultdict
 from weakref import WeakMethod
-from functools import wraps
 
 
 LOGGER = logging.getLogger(__name__)
@@ -19,9 +18,6 @@ def maybe_make_klass(value, attrs):
     "Create base classes to override __setitem__ and cache them"
     base = value.__class__
     name = f'_Reactome_{base.__name__.title()}'
-    attrs.update({
-        '_is_reaktome': True,
-    })
     if base not in KLASSES:
         KLASSES[base] = type(name, (base, _ReaktomeBase), attrs)
     return KLASSES[base]
@@ -36,9 +32,6 @@ def reaktiv8(value: Any,
              path: str = '',
              ) -> Any:
     """Wrap dicts/lists with reactive containers recursively"""
-    # if hasattr(value, '_is_reaktome'):
-    #     return value
-
     if isinstance(value, (ReaktomeDict, ReaktomeList, _ReaktomeBase)):
         return value
 
@@ -69,7 +62,8 @@ def reaktiv8(value: Any,
 
         value.__class__ = maybe_make_klass(value, {
             '__setattr__': __setattr__,
-            'on_change': lambda self, path, old, new: _on_change(path, old, new),
+            'on_change': lambda self, path, old, new: _on_change(
+                path, old, new),
         })
 
     return value
@@ -264,6 +258,7 @@ class ReaktomeWatcher:
         if getattr(cb, '__self__', None) is not None:
             # NOTE: cb is a method, use a Weakref
             self.cb = WeakMethod(cb)
+
         else:
             self.cb = cb
 
@@ -279,27 +274,23 @@ class ReaktomeWatcher:
         return cb(name, old, new)
 
 
-def ensure_watchers(f):
-    @wraps(f)
-    def inner(self, *args, **kwargs):
-        if not hasattr(self, '_watchers'):
-            self.__dict__['_watchers'] = defaultdict(set)
-        return f(self, *args, **kwargs)
-    return inner
-
-
 class ReaktomeWatch:
-    @ensure_watchers
     def on(self,
            path: str,
            cb: ON_CHANGE,
            ) -> tuple[str, ReaktomeWatcher]:
         watcher = ReaktomeWatcher(cb)
-        self._watchers[path].add(watcher)  # type: ignore
+        self.__dict__.setdefault(
+            '_watchers', defaultdict(set))[path].add(watcher)
         return (path, watcher)
 
-    @ensure_watchers
     def off(self, path_cb: tuple[str, ReaktomeWatcher]) -> None:
+        try:
+            _watchers = self.__dict__['_watchers']
+
+        except KeyError:
+            return
+
         try:
             path, watcher = path_cb
 
@@ -307,23 +298,26 @@ class ReaktomeWatch:
             raise ValueError('Invalid handle: %s', path_cb)
 
         try:
-            self._watchers[path].discard(watcher)  # type: ignore
+            _watchers[path].discard(watcher)  # type: ignore
 
         except ValueError:
             pass
 
-    @ensure_watchers
     def on_change(self, path, old=None, new=None):
         """Hook to respond to all attribute/item changes"""
         LOGGER.debug(f"⚡ Change → {path}: {old} → {new}")
+
+        try:
+            _watchers = self.__dict__['_watchers']
+
+        except KeyError:
+            return
+
         dead = []
-
-        watchers = [
-            *self._watchers.get('*', []),
-            *self._watchers.get(path, []),
-        ]
-
-        for watcher in watchers:
+        for watcher in [
+                    *_watchers.get('*', []),
+                    *_watchers.get(path, []),
+                ]:
             try:
                 watcher(path, old, new)
 
@@ -331,7 +325,7 @@ class ReaktomeWatch:
                 dead.append((path, watcher))
 
         for (path, watcher) in dead:
-            self._watchers[path].discard(watcher)
+            _watchers[path].discard(watcher)
 
 
 class Reaktome(ReaktomeWatch, metaclass=ReaktomeMeta):
