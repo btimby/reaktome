@@ -19,7 +19,11 @@ def maybe_make_klass(value, attrs):
     base = value.__class__
     name = f'_Reactome_{base.__name__.title()}'
     if base not in KLASSES:
-        KLASSES[base] = type(name, (base, _ReaktomeBase), attrs)
+        class _Reaktome_Proxy(base, _ReaktomeBase):
+            @property
+            def __class__(self):
+                return base
+        KLASSES[base] = _Reaktome_Proxy  # type(name, (base, _ReaktomeBase), attrs)
     return KLASSES[base]
 
 

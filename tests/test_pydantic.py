@@ -50,3 +50,10 @@ class ReaktomeTestCase(unittest.TestCase):
         coll[0] = FooModel(id='xyz987', name='Richard')
         coll[0].id = 'efg456'
         self.assertEqual(2, handler.call_count)
+
+    def test_reaktome_isinstance(self):
+        coll = FooModelCollection([
+            {'id': 'abc123', 'name': 'Roger'},
+        ])
+        import pdb; pdb.set_trace()
+        self.assertTrue(type(coll[0]) == FooModel)

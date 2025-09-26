@@ -1,21 +1,15 @@
-from setuptools import setup
-
-from reaktome.__version__ import __version__
-
+from setuptools import setup, Extension, find_packages
 
 setup(
-    name='reaktome',
-    version=__version__,
-    author='Ben Timby',
-    author_email='btimby@gmail.com',
-    description='Vue-like reactivity for Python',
-    long_description='Track and report changes to object hierarchy.',
-    packages=['reaktome'],
-    classifiers=[
-        'Development Status :: 5 - Production/Stable',
-        'Intended Audience :: Developers',
-        'License :: OSI Approved :: MIT License',
-        'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.6',
+    name="reaktome",
+    version="0.1.3",
+    description="Advisory-only setattr hooks with veto support",
+    packages=find_packages(include=["reaktome", "reaktome.*"]),
+    ext_modules=[
+        Extension(
+            name="_reaktome",
+            sources=["src/_reaktome.c"],
+        )
     ],
+    python_requires=">=3.12",
 )
