@@ -1,59 +1,37 @@
 import unittest
 
-from typing import Any
+from typing import Any, Optional
 
 from unittest.mock import MagicMock
 from pydantic import BaseModel
 from pydantic_collections import BaseCollectionModel
 
-from reaktome import Reaktome, ReaktomeWatch, reaktiv8
+from reaktome import Reaktome, reaktiv8
 
 
-class ReaktomeCollection(ReaktomeWatch):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        for i, obj in enumerate(self):
-            # Don't double wrap...
-            super().__setitem__(i, reaktiv8(obj, on_change=self.on_change, path=f'[{i}]'))
-
-    def __setitem__(self, name, value):
-        old = self[name]
-        super().__setitem__(name, reaktiv8(value, on_change=self.on_change, path=f'[{name}]'))
-        self.on_change(f'[{name}]', old, value)
-
-
-class FooModel(BaseModel):
+class FooModel(Reaktome, BaseModel):
     id: str
     name: str
 
 
-class BarModel(BaseModel):
+class BarModel(Reaktome, BaseModel):
     id: str
     name: str
+    foo: Optional[FooModel] = None
 
 
-class FooModelCollection(ReaktomeCollection, BaseCollectionModel[FooModel]):
+class FooModelCollection(Reaktome, BaseCollectionModel[FooModel]):
     pass
 
 
-class BarModelCollection(ReaktomeCollection, BaseCollectionModel[BarModel]):
+class BarModelCollection(Reaktome, BaseCollectionModel[BarModel]):
     pass
 
 
 class ReaktomeTestCase(unittest.TestCase):
-    def test_reaktome_collection(self):
-        handler = MagicMock()
-        coll = FooModelCollection([
-            {'id': 'abc123', 'name': 'Roger'},
-        ])
-        coll.on('*', handler)
-        coll[0] = FooModel(id='xyz987', name='Richard')
-        coll[0].id = 'efg456'
-        self.assertEqual(2, handler.call_count)
-
-    def test_reaktome_isinstance(self):
-        coll = FooModelCollection([
-            {'id': 'abc123', 'name': 'Roger'},
-        ])
-        import pdb; pdb.set_trace()
-        self.assertTrue(type(coll[0]) == FooModel)
+    def test_reaktome_model(self):
+        bar = BarModel(id='abc123', name='foo')
+        bar.name = 'bar'
+        foo = bar.foo = FooModel(id='xyz098', name='foo')
+        foo.name = 'baz'
+        bar.foo.name = 'ben'
