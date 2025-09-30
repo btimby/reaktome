@@ -7,13 +7,14 @@ setup(
     packages=find_packages(include=["reaktome", "reaktome.*"]),
     ext_modules=[
         Extension(
-            name="reaktome",
+            name="_reaktome",
             sources=[
                 "src/reaktome.c",
                 "src/list.c",
                 "src/dict.c",
                 "src/set.c",
                 "src/obj.c",
+                "src/activation.c",
             ],
             include_dirs=["src"],  # <— tells gcc where to find reaktome.h
         )

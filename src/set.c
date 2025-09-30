@@ -1,119 +1,109 @@
+/* src/set.c */
+#define PY_SSIZE_T_CLEAN
 #include <Python.h>
 #include "activation.h"
+#include "reaktome.h"
 
-// --- Core helpers ---
+/* ---------- saved original slot pointers ---------- */
+static int (*orig_tp_ass_sub)(PyObject *, PyObject *, PyObject *) = NULL;
 
-static PyObject *
-reaktome_set_add(PyObject *self, PyObject *arg)
+/* ---------- dunder dispatcher ---------- */
+static int
+call_dunders(PyObject *self, const char *name, PyObject *key,
+             PyObject *old, PyObject *new)
 {
-    PyObject *res = PyObject_CallMethod(self, "add", "O", arg);
-    if (!res) return NULL;
-
-    reaktome_call_dunder(self, "__reaktome_additem__", arg, Py_None, arg);
-    return res;
-}
-
-static PyObject *
-reaktome_set_discard(PyObject *self, PyObject *arg)
-{
-    int contains = PySet_Contains(self, arg);
-
-    PyObject *res = PyObject_CallMethod(self, "discard", "O", arg);
-    if (!res) return NULL;
-
-    if (contains == 1) {
-        reaktome_call_dunder(self, "__reaktome_discarditem__", arg, arg, Py_None);
+    PyObject *hooks = activation_get_hooks(self); /* newref or NULL */
+    if (!hooks) {
+        return 0; /* no hooks */
     }
 
-    return res;
-}
+    PyObject *dunder = PyDict_GetItemString(hooks, name);
+    if (!dunder) {
+        Py_DECREF(hooks);
+        return 0; /* no dunder for this op */
+    }
 
-static PyObject *
-reaktome_set_clear(PyObject *self, PyObject *Py_UNUSED(ignored))
-{
-    PyObject *items = PySequence_List(self);
-    if (!items) return NULL;
+    PyObject *args = PyTuple_Pack(4, self, key ? key : Py_None,
+                                  old ? old : Py_None,
+                                  new ? new : Py_None);
+    if (!args) {
+        Py_DECREF(hooks);
+        return -1;
+    }
 
-    PyObject *res = PyObject_CallMethod(self, "clear", NULL);
+    PyObject *res = PyObject_CallObject(dunder, args);
+    Py_DECREF(args);
+    Py_DECREF(hooks);
+
     if (!res) {
-        Py_DECREF(items);
-        return NULL;
+        return -1; /* propagate exception */
     }
-
-    Py_ssize_t n = PyList_GET_SIZE(items);
-    for (Py_ssize_t i = 0; i < n; i++) {
-        PyObject *item = PyList_GET_ITEM(items, i);
-        Py_INCREF(item);
-        reaktome_call_dunder(self, "__reaktome_discarditem__", item, item, Py_None);
-        Py_DECREF(item);
-    }
-
-    Py_DECREF(items);
-    return res;
-}
-
-static PyObject *
-reaktome_set_update(PyObject *self, PyObject *arg)
-{
-    PyObject *iter = PyObject_GetIter(arg);
-    if (!iter) return NULL;
-
-    PyObject *res = PyObject_CallMethod(self, "update", "O", arg);
-    if (!res) {
-        Py_DECREF(iter);
-        return NULL;
-    }
-
-    PyObject *item;
-    while ((item = PyIter_Next(iter))) {
-        reaktome_call_dunder(self, "__reaktome_additem__", item, Py_None, item);
-        Py_DECREF(item);
-    }
-    Py_DECREF(iter);
-
-    return res;
-}
-
-// --- MethodDefs ---
-
-static PyMethodDef reaktome_set_add_def = {
-    "add", (PyCFunction)reaktome_set_add, METH_O, NULL
-};
-
-static PyMethodDef reaktome_set_discard_def = {
-    "discard", (PyCFunction)reaktome_set_discard, METH_O, NULL
-};
-
-static PyMethodDef reaktome_set_clear_def = {
-    "clear", (PyCFunction)reaktome_set_clear, METH_NOARGS, NULL
-};
-
-static PyMethodDef reaktome_set_update_def = {
-    "update", (PyCFunction)reaktome_set_update, METH_O, NULL
-};
-
-// --- Patch function ---
-
-int patch_set(PyObject *dunders)
-{
-    if (reaktome_activate_type(&PySet_Type, dunders) < 0)
-        return -1;
-
-    if (PyDict_SetItemString(PySet_Type.tp_dict, "add",
-            PyCFunction_NewEx(&reaktome_set_add_def, NULL, NULL)) < 0)
-        return -1;
-
-    if (PyDict_SetItemString(PySet_Type.tp_dict, "discard",
-            PyCFunction_NewEx(&reaktome_set_discard_def, NULL, NULL)) < 0)
-        return -1;
-
-    if (PyDict_SetItemString(PySet_Type.tp_dict, "clear",
-            PyCFunction_NewEx(&reaktome_set_clear_def, NULL, NULL)) < 0)
-        return -1;
-
-    if (PyDict_SetItemString(PySet_Type.tp_dict, "update",
-            PyCFunction_NewEx(&reaktome_set_update_def, NULL, NULL)) < 0)
-        return -1;
-
+    Py_DECREF(res);
     return 0;
+}
+
+/* ---------- hook wrappers ---------- */
+static int
+reaktome_ass_sub(PyObject *self, PyObject *key, PyObject *value)
+{
+    int rc;
+    PyObject *old = NULL;
+
+    if (value) {
+        /* add or replace */
+        old = PySet_Contains(self, key) == 1 ? Py_NewRef(key) : NULL;
+        rc = orig_tp_ass_sub(self, key, value);
+        if (rc == 0) {
+            rc = call_dunders(self, "__reaktome_additem__", key, old, key);
+        }
+    } else {
+        /* discard */
+        old = PySet_Contains(self, key) == 1 ? Py_NewRef(key) : NULL;
+        rc = orig_tp_ass_sub(self, key, NULL);
+        if (rc == 0 && old) {
+            rc = call_dunders(self, "__reaktome_discarditem__", key, old, NULL);
+        }
+    }
+
+    Py_XDECREF(old);
+    return rc;
+}
+
+/* ---------- public patch API ---------- */
+static PyObject *
+py_patch_set(PyObject *Py_UNUSED(module), PyObject *args)
+{
+    PyObject *self;
+    PyObject *hooks;
+    if (!PyArg_ParseTuple(args, "OO", &self, &hooks)) {
+        return NULL;
+    }
+
+    if (hooks == Py_None) {
+        activation_clear(self);
+        return Py_NewRef(Py_None);
+    }
+
+    if (!orig_tp_ass_sub) {
+        orig_tp_ass_sub = Py_TYPE(self)->tp_as_mapping->mp_ass_subscript;
+    }
+
+    activation_set(self, hooks);
+    Py_TYPE(self)->tp_as_mapping->mp_ass_subscript = reaktome_ass_sub;
+
+    Py_RETURN_NONE;
+}
+
+/* ---------- method table ---------- */
+static PyMethodDef set_methods[] = {
+    {"patch_set", (PyCFunction)py_patch_set, METH_VARARGS,
+     "Patch a set instance with reaktome hooks."},
+    {NULL, NULL, 0, NULL}
+};
+
+/* ---------- registration ---------- */
+int
+init_set_patch(PyObject *m)
+{
+    return PyModule_AddFunctions(m, set_methods);
 }

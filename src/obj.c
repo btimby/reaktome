@@ -1,101 +1,40 @@
-// src/obj.c
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
-
-/* from activation.c */
-extern PyObject *activation_get_hooks(PyObject *obj);
-
-static void
-_call_setattr_hook(PyObject *hooks, PyObject *self,
-                   PyObject *key, PyObject *oldv, PyObject *newv)
-{
-    if (!hooks) return;
-    PyObject *hook = PyDict_GetItemString(hooks, "__reaktome_setattr__");
-    if (!hook) return;
-    PyObject *res = PyObject_CallFunctionObjArgs(hook, self, key, oldv ? oldv : Py_None, newv, NULL);
-    Py_XDECREF(res);
-}
-
-static void
-_call_delattr_hook(PyObject *hooks, PyObject *self,
-                   PyObject *key, PyObject *oldv)
-{
-    if (!hooks) return;
-    PyObject *hook = PyDict_GetItemString(hooks, "__reaktome_delattr__");
-    if (!hook) return;
-    PyObject *res = PyObject_CallFunctionObjArgs(hook, self, key, oldv ? oldv : Py_None, NULL);
-    Py_XDECREF(res);
-}
+#include "activation.h"
+#include "reaktome.h"
 
 static PyObject *
-reaktome_obj_setattr(PyObject *self, PyObject *args)
+py_patch_type(PyObject *self, PyObject *args, PyObject *kwargs)
 {
-    PyObject *name, *value;
-    if (!PyArg_ParseTuple(args, "OO", &name, &value)) return NULL;
+    PyTypeObject *tp;
+    PyObject *dunders = NULL;
+    static char *kwlist[] = {"tp", "dunders", NULL};
 
-    /* fetch old value */
-    PyObject *oldv = PyObject_GetAttr(self, name);
-    PyErr_Clear();
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O!|O", kwlist, &PyType_Type, &tp, &dunders))
+        return NULL;
 
-    PyObject *res = PyObject_CallMethod(self, "__setattr__", "OO", name, value);
-    if (!res) {
-        Py_XDECREF(oldv);
+    if (dunders == NULL) dunders = Py_None;
+    if (dunders != Py_None && !PyDict_Check(dunders)) {
+        PyErr_SetString(PyExc_TypeError, "patch_type: dunders must be a dict or None");
         return NULL;
     }
 
-    PyObject *hooks = activation_get_hooks(self);
-    if (hooks) {
-        _call_setattr_hook(hooks, self, name, oldv, value);
-        Py_DECREF(hooks);
-    }
-    Py_XDECREF(oldv);
-    return res;
-}
-
-static PyObject *
-reaktome_obj_delattr(PyObject *self, PyObject *arg)
-{
-    /* fetch old value */
-    PyObject *oldv = PyObject_GetAttr(self, arg);
-    PyErr_Clear();
-
-    PyObject *res = PyObject_CallMethod(self, "__delattr__", "O", arg);
-    if (!res) {
-        Py_XDECREF(oldv);
+    if (activation_merge((PyObject *)tp, dunders) < 0)
         return NULL;
-    }
 
-    PyObject *hooks = activation_get_hooks(self);
-    if (hooks) {
-        _call_delattr_hook(hooks, self, arg, oldv);
-        Py_DECREF(hooks);
-    }
-    Py_XDECREF(oldv);
-    return res;
+    Py_RETURN_NONE;
 }
 
-/* --- defs --- */
-static PyMethodDef reaktome_obj_setattr_def = {
-    "__setattr__", (PyCFunction)reaktome_obj_setattr, METH_VARARGS, NULL
+static PyMethodDef obj_methods[] = {
+    {"patch_type", (PyCFunction)py_patch_type, METH_VARARGS | METH_KEYWORDS,
+     "Activate reaktome hooks on a type: patch_type(tp, dunders=None)"},
+    {NULL, NULL, 0, NULL}
 };
-static PyMethodDef reaktome_obj_delattr_def = {
-    "__delattr__", (PyCFunction)reaktome_obj_delattr, METH_O, NULL
-};
-
-static int
-_install_obj_method(PyTypeObject *tp, PyMethodDef *mdef)
-{
-    PyObject *func = PyCFunction_NewEx(mdef, NULL, NULL);
-    if (!func) return -1;
-    int rv = PyDict_SetItemString(tp->tp_dict, mdef->ml_name, func);
-    Py_DECREF(func);
-    return rv;
-}
 
 int
-patch_obj(PyTypeObject *tp)
+reaktome_patch_obj(PyObject *m)
 {
-    if (_install_obj_method(tp, &reaktome_obj_setattr_def) < 0) return -1;
-    if (_install_obj_method(tp, &reaktome_obj_delattr_def) < 0) return -1;
+    if (PyModule_AddFunctions(m, obj_methods) < 0)
+        return -1;
     return 0;
 }

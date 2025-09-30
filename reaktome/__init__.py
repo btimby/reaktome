@@ -3,7 +3,7 @@ import logging
 
 from fnmatch import fnmatch
 from types import MethodType
-from typing import Any, Optional, Callable
+from typing import Any, Optional, Callable, Union
 
 import _reaktome as _r
 
@@ -15,11 +15,19 @@ SENTINAL = object()
 REVERSES = {}
 
 
-def print_change(name: str, old: Any, new: Any) -> None:
-    print(f'⚡ {name}: {repr(old)} → {repr(new)}')
-
-
 class Change:
+    def __init__(self, obj: Any, key: Union[str, int], old: Any, new: Any, source: str) -> None:
+        self.obj = obj
+        self.key = key
+        self.old = old
+        self.new = new
+        self.source = source
+
+    def print(self) -> None:
+        print(f'⚡ {self.key}: {repr(self.old)} → {repr(self.new)}')
+
+
+class BackRef:
     def __init__(self,
                  parent: Any,
                  obj: Any,
@@ -41,22 +49,23 @@ class Change:
         else:  # attr
             return f'{self.name}.{name}'
 
-    def __eq__(self, them: 'Change'):
-        return (isinstance(other, Change) and
-            (id(self.parent), id(self.obj), self.name, self.source) ==
-            (id(them.parent), id(them.obj), them.name, them.source))
+    def __eq__(self, them: 'BackRef'):
+        if not isinstance(them, BackRef):
+            return False
+        return (id(self.parent), id(self.obj), self.name, self.source) == \
+            (id(them.parent), id(them.obj), them.name, them.source)
 
     def __hash__(self):
         return hash((id(self.parent), id(self.obj), self.name, self.source))
 
     def __call__(self,
-                 name: str,
-                 old: Any,
-                 new: Any,
-                 source: str = 'attr',
+                 change: Change,
                  ) -> None:
-        name = self.make_name(name, source)
-        Changes.invoke(self, name, old, new, self.source)
+        if self.parent is None:
+            return
+
+        name = self.make_name(change.key, change.source)
+        Changes.invoke(Change(self.parent, name, change.old, change.new, source=self.source))
 
 
 class ChangeFilter:
@@ -67,57 +76,66 @@ class ChangeFilter:
         self.pattern = re.compile(pattern) if regex else pattern
         self.regex = regex
 
-    def __call__(self, name: str) -> bool:
+    def __call__(self, change: Change) -> bool:
         if self.pattern is None:
             return True
         if self.regex:
-            return bool(self.pattern.match(name))
-        return fnmatch(name, self.pattern)
+            return bool(self.pattern.match(change.key))
+        return fnmatch(change.key, self.pattern)
 
 
 class Changes:
     __instances__: dict[int, 'Changes'] = {}
 
     def __init__(self):
-        self.changes: list[Change] = []
+        self.backrefs: set[BackRef] = set()
         self.callbacks: list[tuple[Callable[Any, bool], Callable[Any, Any]]] = []
 
-    def __bool__(self):
-        return bool(self.changes)
+    def _add_backref(self, backref: BackRef) -> None:
+        self.backrefs.add(backref)
 
-    def __iadd__(self, change: Change) -> None:
-        self.changes.append(change)
+    def _del_backref(self, backref: BackRef) -> None:
+        self.backrefs.discard(backref)
 
-    def __isub__(self, change: Change) -> None:
-        self.changes.remove(change)
+    def _invoke(self, change: Change) -> None:
+        for r in self.backrefs:
+            try:
+                r(change)
 
-    def __call__(self, name: str, old: Any, new: Any, source: str) -> None:
-        for r in self.changes:
-            r(name, old, new, source)
-        for filter, cb in self.callbacks:
-            if not filter(name):
+            except Exception as e:
+                LOGGER.error('Reverse call failed: %s', e)
                 continue
-            cb(name, old, new)
+
+        for filter, cb in self.callbacks:
+            if not filter(change):
+                continue
+
+            try:
+                cb(change)
+
+            except Exception as e:
+                LOGGER.error('Callback failed: %s', e)
+                continue
 
     @classmethod
-    def add(cls, obj: Any, change: Change) -> Change:
+    def add_backref(cls, obj: Any, backref: BackRef) -> Change:
         changes = cls.__instances__.setdefault(id(obj), Changes())
-        changes += change
-        return change
+        changes._add_backref(backref)
+        return backref
 
     @classmethod
-    def invoke(cls, obj: Any, *args: Any, **kwargs: Any) -> None:
-        changes = cls.__instances__.get(id(obj))
+    def invoke(cls, change: Change) -> None:
+        changes = cls.__instances__.get(id(change.obj))
         if changes:
-            changes(*args, **kwargs)
+            changes._invoke(change)
 
     @classmethod
-    def remove(cls, obj: Any, change: Change) -> None:
+    def del_backref(cls, obj: Any, backref: BackRef) -> None:
         changes = cls.__instances__.get(id(obj))
         if not changes:
             return
-        changes -= change
-        if changes:
+        changes._del_backref(backref)
+        if changes.backrefs:
             return
         cls.__instances__.pop(id(obj), None)
 
@@ -143,69 +161,103 @@ def __reaktome_setattr__(self, name: str, old: Any, new: Any) -> None:
         return new
     reaktiv8(new, parent=self, name=name, source='attr')
     deaktiv8(old, parent=self, name=name, source='attr')
-    Changes.invoke(self, name, old, new, source='attr')
+    Changes.invoke(Change(self, name, old, new, source='attr'))
     return new
 
 
-def __reaktome_delattr__(self, name: str, old: Any) -> None:
+def __reaktome_delattr__(self, name: str, old: Any, new: Any) -> None:
     "Used by Obj."
     if name.startswith('_'):
         return
     deaktiv8(old, parent=self, name=name, source='attr')
-    Changes.invoke(self, name, old, None, source='attr')
+    Changes.invoke(Change(self, name, old, None, source='attr'))
 
 
 def __reaktome_setitem__(self, key: str, old: Any, new: Any) -> None:
     "Used by Dict, List."
     reaktiv8(new, parent=self, name=key, source='item')
     deaktiv8(old, parent=self, name=key, source='item')
-    Changes.invoke(self, key, old, new, source='item')
+    Changes.invoke(Change(self, key, old, new, source='item'))
 
 
-def __reaktome_delitem__(self, key: str, old: Any) -> None:
+def __reaktome_delitem__(self, key: str, old: Any, new: Any) -> None:
     "Used by Dict, List."
     deaktiv8(old, parent=self, name=key, source='item')
-    Changes.invoke(self, key, old, None, source='item')
+    Changes.invoke(Change(self, key, old, None, source='item'))
 
 
-def reaktiv8(obj: Any,
-             parent: Any = None,
-             name: Optional[str] = None,
-             source: str = 'attr',
-             ) -> None:
+def reaktiv8(
+    obj: Any,
+    parent: Any = None,
+    name: Optional[str] = None,
+    source: str = "attr",
+) -> None:
     """
-    Inject __setattr__, __setitem__ and other instance-level hooks.
+    Activate reaktome hooks on an object instance and register it for change tracking.
     """
 
-    if isinstance(obj, set):
-        _r.patch_set()
-        Changes.add(obj, Change(parent, obj, name, source='item'))
+    if isinstance(obj, list):
+        _r.patch_list(obj, {
+            "__reaktome_setitem__": __reaktome_setitem__,
+            "__reaktome_delitem__": __reaktome_delitem__,
+        })
+        Changes.add_backref(obj, BackRef(parent, obj, name, source="item"))
 
-    elif isinstance(obj, list):
-        _r.patch_list()
-        Changes.add(obj, Change(parent, obj, name, source='item'))
+    elif isinstance(obj, set):
+        _r.patch_set(obj, {
+            "__reaktome_additem__": __reaktome_additem__,
+            "__reaktome_discarditem__": __reaktome_discarditem__,
+            "__reaktome_delitem__": __reaktome_delitem__,
+        })
+        Changes.add_backref(obj, BackRef(parent, obj, name, source="item"))
 
     elif isinstance(obj, dict):
-        _r.patch_dict()
-        Changes.add(obj, Change(parent, obj, name, source='item'))
+        _r.patch_dict(obj, {
+            "__reaktome_setitem__": __reaktome_setitem__,
+            "__reaktome_delitem__": __reaktome_delitem__,
+        })
+        Changes.add_backref(obj, BackRef(parent, obj, name, source="item"))
 
-    elif hasattr(obj, '__dict__'):
-        _r.patch_type(obj.__class__)
-        obj.__dict__['__reaktome_setattr__'] = __reaktome_setattr__
-        obj.__dict__['__reaktome_delattr__'] = __reaktome_delattr__
-        Changes.add(obj, Change(parent, obj, name, source='attr'))
+    elif hasattr(obj, "__dict__"):
+        _r.patch_obj(obj, {
+            "__reaktome_setattr__": __reaktome_setattr__,
+            "__reaktome_delattr__": __reaktome_delattr__,
+        })
+        Changes.add_backref(obj, BackRef(parent, obj, name, source="attr"))
 
     else:
+        # unsupported type
         return
 
 
-def deaktiv8(obj: Any,
-             parent: Any = None,
-             name: str = None,
-             source: str = 'attr',
-             ) -> None:
-    if isinstance(obj, (list, dict, set)) or hasattr(obj, '__dict__'):
-        Changes.remove(obj, Change(parent, obj, name, source))
+def deaktiv8(
+    obj: Any,
+    parent: Any = None,
+    name: Optional[str] = None,
+    source: str = "attr",
+) -> None:
+    """
+    Deactivate reaktome hooks on an object instance and remove it from change tracking.
+    """
+
+    if isinstance(obj, list):
+        _r.patch_list(obj, None)
+        Changes.del_backref(obj, BackRef(parent, obj, name, source))
+
+    elif isinstance(obj, set):
+        _r.patch_set(obj, None)
+        Changes.del_backref(obj, BackRef(parent, obj, name, source))
+
+    elif isinstance(obj, dict):
+        _r.patch_dict(obj, None)
+        Changes.del_backref(obj, BackRef(parent, obj, name, source))
+
+    elif hasattr(obj, "__dict__"):
+        _r.patch_obj(obj, None)
+        Changes.del_backref(obj, BackRef(parent, obj, name, source))
+
+    else:
+        return
 
 
 class Reaktome:

@@ -51,6 +51,15 @@ Each container module:
 - Ensure trampolines installed once per type (static guard).  
 - Call `activation_merge(instance, dunders)`.
 
+#### Exporting `patch_<type>` into the module
+- Each container file must declare a `py_patch_<type>` function with the signature:
+  `static PyObject *py_patch_<type>(PyObject *self, PyObject *args)`.
+- This must be added to the module using a `PyMethodDef` table and
+  `PyModule_AddFunctions(m, methods)`.
+- Never insert the raw function pointer into the module dict
+  (`PyModule_AddObject`) — that produces an invalid `builtin_function_or_method`
+  object and breaks `vectorcall`.
+
 ---
 
 ### `reaktome.c` — module init
@@ -69,6 +78,9 @@ Each container module:
   - Call original first.  
   - Then call hook(s) via `reaktome_call_dunder`.  
   - Swallow exceptions (`PyErr_Clear`).  
+- **Always store the *original method objects* (e.g. `list.append`) before replacement, never raw C function pointers.**  
+  - Calling a raw function pointer causes signature mismatches and crashes.  
+  - Use `PyObject_CallFunctionObjArgs(orig_method, self, ...)` to safely invoke.  
 
 ---
 

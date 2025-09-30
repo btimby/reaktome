@@ -60,7 +60,7 @@ tramp_sq_ass_item(PyObject *self, Py_ssize_t i, PyObject *v)
 
         PyObject *key = PyLong_FromSsize_t(i);
         if (key) {
-            call_hook_advisory(self, "__reaktome_additem__", key, old, v);
+            call_hook_advisory(self, "__reaktome_setitem__", key, old, v);
             Py_DECREF(key);
         }
         Py_DECREF(old);
@@ -100,7 +100,7 @@ tramp_mp_ass_subscript(PyObject *self, PyObject *key, PyObject *value)
 
             if (rc < 0) { Py_DECREF(old); return -1; }
 
-            call_hook_advisory(self, "__reaktome_additem__", key, old, value);
+            call_hook_advisory(self, "__reaktome_setitem__", key, old, value);
             Py_DECREF(old);
             return 0;
         }
@@ -124,7 +124,7 @@ tramp_mp_ass_subscript(PyObject *self, PyObject *key, PyObject *value)
             for (Py_ssize_t j = 0; j < n; j++) {
                 PyObject *new_item = PySequence_GetItem(value, j);
                 if (!new_item) { Py_XDECREF(old_slice); return -1; }
-                call_hook_advisory(self, "__reaktome_additem__", NULL, NULL, new_item);
+                call_hook_advisory(self, "__reaktome_setitem__", NULL, NULL, new_item);
                 Py_DECREF(new_item);
             }
         }
@@ -159,7 +159,7 @@ tramp_sq_ass_slice(PyObject *self, Py_ssize_t i, Py_ssize_t j, PyObject *v)
         for (Py_ssize_t t = 0; t < n; t++) {
             PyObject *it = PySequence_GetItem(v, t);
             if (!it) { Py_XDECREF(old_slice); return -1; }
-            call_hook_advisory(self, "__reaktome_additem__", NULL, NULL, it);
+            call_hook_advisory(self, "__reaktome_setitem__", NULL, NULL, it);
             Py_DECREF(it);
         }
     }
@@ -182,11 +182,20 @@ tramp_sq_ass_slice(PyObject *self, Py_ssize_t i, Py_ssize_t j, PyObject *v)
 static PyObject *
 tramp_append(PyObject *self, PyObject *arg)
 {
+    Py_ssize_t idx = PyList_GET_SIZE(self);
+
     if (PyList_Append(self, arg) < 0) return NULL;
 
-    if (reaktome_call_dunder(self, "__reaktome_additem__", NULL, NULL, arg) < 0) {
+    PyObject *key = PyLong_FromSsize_t(idx);
+    if (!key)
+        return NULL;
+
+    if (reaktome_call_dunder(self, "__reaktome_setitem__", key, NULL, arg) < 0) {
+        Py_DECREF(key);
         return NULL;
     }
+
+    Py_DECREF(key);
     Py_RETURN_NONE;
 }
 
@@ -198,7 +207,7 @@ tramp_extend(PyObject *self, PyObject *iterable)
     PyObject *item;
     while ((item = PyIter_Next(it))) {
         if (PyList_Append(self, item) < 0) { Py_DECREF(item); Py_DECREF(it); return NULL; }
-        call_hook_advisory(self, "__reaktome_additem__", NULL, NULL, item);
+        call_hook_advisory(self, "__reaktome_setitem__", NULL, NULL, item);
         Py_DECREF(item);
     }
     Py_DECREF(it);
@@ -215,7 +224,7 @@ tramp_insert(PyObject *self, PyObject *args)
     if (PyList_Insert(self, idx, val) < 0) return NULL;
     PyObject *key = PyLong_FromSsize_t(idx);
     if (key) {
-        call_hook_advisory(self, "__reaktome_additem__", key, NULL, val);
+        call_hook_advisory(self, "__reaktome_setitem__", key, NULL, val);
         Py_DECREF(key);
     }
     Py_RETURN_NONE;

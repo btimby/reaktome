@@ -192,19 +192,20 @@ reaktome_call_dunder(PyObject *self,
         return 0;
     }
 
-    /* Build args: (self, key_or_None, old_or_None, new_or_None) */
+    /* Normalize missing args to None */
     PyObject *k = key ? key : Py_None;
     PyObject *o = old ? old : Py_None;
     PyObject *n = newv ? newv : Py_None;
     Py_INCREF(k); Py_INCREF(o); Py_INCREF(n);
 
+    /* Always call as func(self, key, old, new) */
     PyObject *res = PyObject_CallFunctionObjArgs(callable, self, k, o, n, NULL);
 
     Py_DECREF(k); Py_DECREF(o); Py_DECREF(n);
     Py_DECREF(hooks);
 
     if (!res) {
-        /* propagate exception */
+        /* propagate Python exception */
         return -1;
     }
     Py_DECREF(res);
