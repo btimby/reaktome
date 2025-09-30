@@ -79,3 +79,25 @@ Each container module:
 4. `lst.extend([2,3])` → two hook calls.  
 5. `lst[0] = 9` → hook called with old=1, new=9.  
 6. `lst.pop()` → returned value.  
+
+---
+
+## Known Non-Patchable Structures
+
+Certain CPython internals are **not safe to patch at runtime**.  
+Reaktome must never attempt to modify these:
+
+- **`tp_methods` arrays**:  
+  - Defined `static` in CPython source (e.g. `list_methods[]` in `listobject.c`).  
+  - Not writable at runtime, so entries like `"append"` cannot be changed here.  
+  - Correct approach: shadow methods in `tp->tp_dict`.
+
+- **`tp_members`, `tp_getset` arrays**:  
+  - Same immutability rules as `tp_methods`.  
+  - Only `tp_dict` shadowing or slot trampolines are valid.
+
+- **Borrowed references in CPython internals**:  
+  - Never decref `tp_dict`, `tp_as_sequence`, or `tp_as_mapping`.  
+  - Only replace and restore function pointers carefully.
+
+> 🔒 **Rule:** If an internal structure is declared `static` in CPython’s source, treat it as immutable at runtime.  
