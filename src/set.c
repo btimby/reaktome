@@ -1,119 +1,119 @@
-// src/set.c
 #include <Python.h>
-#include "patch.h"
+#include "activation.h"
 
-// These come from obj.c (or a shared hook file)
-extern PyObject* __reaktome_additem__(PyObject* self, PyObject* item);
-extern PyObject* __reaktome_discarditem__(PyObject* self, PyObject* item);
-
-// --- Wrapped methods for set ---
+// --- Core helpers ---
 
 static PyObject *
-reaktome_set_add(PyObject *self, PyObject *args)
+reaktome_set_add(PyObject *self, PyObject *arg)
 {
-    PyObject *item;
-    if (!PyArg_UnpackTuple(args, "add", 1, 1, &item))
-        return NULL;
+    PyObject *res = PyObject_CallMethod(self, "add", "O", arg);
+    if (!res) return NULL;
 
-    int contains = PySet_Contains(self, item);
-    if (contains == -1)
-        return NULL;
-
-    if (!contains) {
-        if (!__reaktome_additem__(self, item))
-            return NULL;
-    }
-
-    if (PySet_Add(self, item) < 0)
-        return NULL;
-
-    Py_RETURN_NONE;
+    reaktome_call_dunder(self, "__reaktome_additem__", arg, Py_None, arg);
+    return res;
 }
 
 static PyObject *
-reaktome_set_remove(PyObject *self, PyObject *args)
+reaktome_set_discard(PyObject *self, PyObject *arg)
 {
-    PyObject *item;
-    if (!PyArg_UnpackTuple(args, "remove", 1, 1, &item))
-        return NULL;
+    int contains = PySet_Contains(self, arg);
 
-    int contains = PySet_Contains(self, item);
-    if (contains == -1)
-        return NULL;
+    PyObject *res = PyObject_CallMethod(self, "discard", "O", arg);
+    if (!res) return NULL;
 
-    if (!contains) {
-        PyErr_SetObject(PyExc_KeyError, item);
-        return NULL;
+    if (contains == 1) {
+        reaktome_call_dunder(self, "__reaktome_discarditem__", arg, arg, Py_None);
     }
 
-    if (!__reaktome_discarditem__(self, item))
-        return NULL;
-
-    if (PySet_Discard(self, item) < 0)
-        return NULL;
-
-    Py_RETURN_NONE;
-}
-
-static PyObject *
-reaktome_set_discard(PyObject *self, PyObject *args)
-{
-    PyObject *item;
-    if (!PyArg_UnpackTuple(args, "discard", 1, 1, &item))
-        return NULL;
-
-    int contains = PySet_Contains(self, item);
-    if (contains == -1)
-        return NULL;
-
-    if (contains) {
-        if (!__reaktome_discarditem__(self, item))
-            return NULL;
-    }
-
-    if (PySet_Discard(self, item) < 0)
-        return NULL;
-
-    Py_RETURN_NONE;
+    return res;
 }
 
 static PyObject *
 reaktome_set_clear(PyObject *self, PyObject *Py_UNUSED(ignored))
 {
-    PyObject *it = PyObject_GetIter(self);
-    if (!it)
-        return NULL;
+    PyObject *items = PySequence_List(self);
+    if (!items) return NULL;
 
-    PyObject *item;
-    while ((item = PyIter_Next(it))) {
-        if (!__reaktome_discarditem__(self, item)) {
-            Py_DECREF(item);
-            Py_DECREF(it);
-            return NULL;
-        }
+    PyObject *res = PyObject_CallMethod(self, "clear", NULL);
+    if (!res) {
+        Py_DECREF(items);
+        return NULL;
+    }
+
+    Py_ssize_t n = PyList_GET_SIZE(items);
+    for (Py_ssize_t i = 0; i < n; i++) {
+        PyObject *item = PyList_GET_ITEM(items, i);
+        Py_INCREF(item);
+        reaktome_call_dunder(self, "__reaktome_discarditem__", item, item, Py_None);
         Py_DECREF(item);
     }
-    Py_DECREF(it);
 
-    if (PySet_Clear(self) < 0)
-        return NULL;
-
-    Py_RETURN_NONE;
+    Py_DECREF(items);
+    return res;
 }
 
-// --- Method patch table ---
-static PyMethodDef reaktome_set_methods[] = {
-    {"add",     (PyCFunction)reaktome_set_add,     METH_VARARGS, "Add an element to the set (with hook)"},
-    {"remove",  (PyCFunction)reaktome_set_remove,  METH_VARARGS, "Remove an element from the set (with hook)"},
-    {"discard", (PyCFunction)reaktome_set_discard, METH_VARARGS, "Discard an element from the set (with hook)"},
-    {"clear",   (PyCFunction)reaktome_set_clear,   METH_NOARGS,  "Clear the set (with hook)"},
-    {NULL, NULL, 0, NULL}
+static PyObject *
+reaktome_set_update(PyObject *self, PyObject *arg)
+{
+    PyObject *iter = PyObject_GetIter(arg);
+    if (!iter) return NULL;
+
+    PyObject *res = PyObject_CallMethod(self, "update", "O", arg);
+    if (!res) {
+        Py_DECREF(iter);
+        return NULL;
+    }
+
+    PyObject *item;
+    while ((item = PyIter_Next(iter))) {
+        reaktome_call_dunder(self, "__reaktome_additem__", item, Py_None, item);
+        Py_DECREF(item);
+    }
+    Py_DECREF(iter);
+
+    return res;
+}
+
+// --- MethodDefs ---
+
+static PyMethodDef reaktome_set_add_def = {
+    "add", (PyCFunction)reaktome_set_add, METH_O, NULL
 };
 
-// --- Patch function exported to Python ---
-int
-patch_set_type(void)
+static PyMethodDef reaktome_set_discard_def = {
+    "discard", (PyCFunction)reaktome_set_discard, METH_O, NULL
+};
+
+static PyMethodDef reaktome_set_clear_def = {
+    "clear", (PyCFunction)reaktome_set_clear, METH_NOARGS, NULL
+};
+
+static PyMethodDef reaktome_set_update_def = {
+    "update", (PyCFunction)reaktome_set_update, METH_O, NULL
+};
+
+// --- Patch function ---
+
+int patch_set(PyObject *dunders)
 {
-    PyObject *set_type = (PyObject *)&PySet_Type;
-    return patch_methods(set_type, reaktome_set_methods);
+    if (reaktome_activate_type(&PySet_Type, dunders) < 0)
+        return -1;
+
+    if (PyDict_SetItemString(PySet_Type.tp_dict, "add",
+            PyCFunction_NewEx(&reaktome_set_add_def, NULL, NULL)) < 0)
+        return -1;
+
+    if (PyDict_SetItemString(PySet_Type.tp_dict, "discard",
+            PyCFunction_NewEx(&reaktome_set_discard_def, NULL, NULL)) < 0)
+        return -1;
+
+    if (PyDict_SetItemString(PySet_Type.tp_dict, "clear",
+            PyCFunction_NewEx(&reaktome_set_clear_def, NULL, NULL)) < 0)
+        return -1;
+
+    if (PyDict_SetItemString(PySet_Type.tp_dict, "update",
+            PyCFunction_NewEx(&reaktome_set_update_def, NULL, NULL)) < 0)
+        return -1;
+
+    return 0;
 }

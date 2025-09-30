@@ -1,144 +1,228 @@
+// src/dict.c
+#define PY_SSIZE_T_CLEAN
 #include <Python.h>
-#include "structmember.h"
 
-// Forward declarations of Python hook symbols
-static PyObject *__reaktome_setitem__ = NULL;
-static PyObject *__reaktome_delitem__ = NULL;
+/* from activation.c */
+extern PyObject *activation_get_hooks(PyObject *obj);
 
-// Our wrapper for dict assignment
-static int
-reaktome_dict_ass_sub(PyObject *self, PyObject *key, PyObject *value)
+static void
+_call_setitem_hook(PyObject *hooks, PyObject *self,
+                   PyObject *key, PyObject *oldv, PyObject *newv)
 {
-    PyObject *old = NULL;
-    int res = -1;
+    if (!hooks) return;
+    PyObject *hook = PyDict_GetItemString(hooks, "__reaktome_setitem__");
+    if (!hook) return;
+    PyObject *res = PyObject_CallFunctionObjArgs(hook, self, key,
+                                                 oldv ? oldv : Py_None, newv, NULL);
+    Py_XDECREF(res);
+}
 
-    if (PyDict_CheckExact(self)) {
-        old = PyDict_GetItemWithError(self, key);
-        if (old) {
-            Py_INCREF(old);
-        } else if (PyErr_Occurred()) {
-            return -1;
-        }
+static void
+_call_delitem_hook(PyObject *hooks, PyObject *self,
+                   PyObject *key, PyObject *oldv)
+{
+    if (!hooks) return;
+    PyObject *hook = PyDict_GetItemString(hooks, "__reaktome_delitem__");
+    if (!hook) return;
+    PyObject *res = PyObject_CallFunctionObjArgs(hook, self, key,
+                                                 oldv ? oldv : Py_None, NULL);
+    Py_XDECREF(res);
+}
+
+static PyObject *
+reaktome_dict_setitem(PyObject *self, PyObject *args)
+{
+    PyObject *key, *value;
+    if (!PyArg_ParseTuple(args, "OO", &key, &value)) return NULL;
+
+    PyObject *oldv = PyObject_GetItem(self, key);
+    PyErr_Clear();
+
+    PyObject *res = PyObject_CallMethod(self, "__setitem__", "OO", key, value);
+    if (!res) {
+        Py_XDECREF(oldv);
+        return NULL;
     }
 
-    // Normal assignment
-    res = PyDict_Type.tp_as_mapping->mp_ass_subscript(self, key, value);
-    if (res < 0) {
-        Py_XDECREF(old);
-        return res;
+    PyObject *hooks = activation_get_hooks(self);
+    if (hooks) {
+        _call_setitem_hook(hooks, self, key, oldv, value);
+        Py_DECREF(hooks);
     }
-
-    // Call hook if available
-    if (__reaktome_setitem__) {
-        PyObject *r = PyObject_CallFunctionObjArgs(
-            __reaktome_setitem__, self, key,
-            old ? old : Py_None,
-            value ? value : Py_None,
-            NULL);
-        if (!r) {
-            PyErr_WriteUnraisable(__reaktome_setitem__);
-        } else {
-            Py_DECREF(r);
-        }
-    }
-
-    Py_XDECREF(old);
+    Py_XDECREF(oldv);
     return res;
 }
 
-// Our wrapper for dict deletion
-static int
-reaktome_dict_del_sub(PyObject *self, PyObject *key)
+static PyObject *
+reaktome_dict_delitem(PyObject *self, PyObject *arg)
 {
-    PyObject *old = NULL;
-    int res = -1;
+    PyObject *oldv = PyObject_GetItem(self, arg);
+    if (!oldv && PyErr_Occurred()) return NULL;
+    PyErr_Clear();
 
-    if (PyDict_CheckExact(self)) {
-        old = PyDict_GetItemWithError(self, key);
-        if (old) {
-            Py_INCREF(old);
-        } else if (PyErr_Occurred()) {
-            return -1;
-        }
+    PyObject *res = PyObject_CallMethod(self, "__delitem__", "O", arg);
+    if (!res) {
+        Py_XDECREF(oldv);
+        return NULL;
     }
 
-    res = PyDict_Type.tp_as_mapping->mp_ass_subscript(self, key, NULL);
-    if (res < 0) {
-        Py_XDECREF(old);
-        return res;
+    PyObject *hooks = activation_get_hooks(self);
+    if (hooks) {
+        _call_delitem_hook(hooks, self, arg, oldv);
+        Py_DECREF(hooks);
     }
-
-    if (__reaktome_delitem__) {
-        PyObject *r = PyObject_CallFunctionObjArgs(
-            __reaktome_delitem__, self, key,
-            old ? old : Py_None,
-            NULL);
-        if (!r) {
-            PyErr_WriteUnraisable(__reaktome_delitem__);
-        } else {
-            Py_DECREF(r);
-        }
-    }
-
-    Py_XDECREF(old);
+    Py_XDECREF(oldv);
     return res;
 }
 
-// Patch function: replace dict methods
-static PyMappingMethods reaktome_dict_as_mapping;
+static PyObject *
+reaktome_dict_clear(PyObject *self, PyObject *Py_UNUSED(ignored))
+{
+    PyObject *items = PyDict_Items(self);
+    if (!items) return NULL;
+
+    PyObject *res = PyObject_CallMethod(self, "clear", NULL);
+    if (!res) {
+        Py_DECREF(items);
+        return NULL;
+    }
+
+    PyObject *hooks = activation_get_hooks(self);
+    if (hooks) {
+        Py_ssize_t n = PyList_GET_SIZE(items);
+        for (Py_ssize_t i = 0; i < n; i++) {
+            PyObject *pair = PyList_GET_ITEM(items, i);
+            PyObject *key = PyTuple_GET_ITEM(pair, 0);
+            PyObject *val = PyTuple_GET_ITEM(pair, 1);
+            Py_INCREF(key);
+            Py_INCREF(val);
+            _call_delitem_hook(hooks, self, key, val);
+            Py_DECREF(key);
+            Py_DECREF(val);
+        }
+        Py_DECREF(hooks);
+    }
+    Py_DECREF(items);
+    return res;
+}
+
+static PyObject *
+reaktome_dict_pop(PyObject *self, PyObject *args)
+{
+    PyObject *key, *def = NULL;
+    if (!PyArg_ParseTuple(args, "O|O", &key, &def)) return NULL;
+
+    PyObject *oldv = PyObject_GetItem(self, key);
+    PyErr_Clear();
+
+    PyObject *res;
+    if (def)
+        res = PyObject_CallMethod(self, "pop", "OO", key, def);
+    else
+        res = PyObject_CallMethod(self, "pop", "O", key);
+
+    if (!res) {
+        Py_XDECREF(oldv);
+        return NULL;
+    }
+
+    if (oldv) {
+        PyObject *hooks = activation_get_hooks(self);
+        if (hooks) {
+            _call_delitem_hook(hooks, self, key, oldv);
+            Py_DECREF(hooks);
+        }
+    }
+    Py_XDECREF(oldv);
+    return res;
+}
+
+static PyObject *
+reaktome_dict_popitem(PyObject *self, PyObject *Py_UNUSED(ignored))
+{
+    PyObject *res = PyObject_CallMethod(self, "popitem", NULL);
+    if (!res) return NULL;
+
+    PyObject *hooks = activation_get_hooks(self);
+    if (hooks) {
+        PyObject *key = PyTuple_GET_ITEM(res, 0);
+        PyObject *val = PyTuple_GET_ITEM(res, 1);
+        Py_INCREF(key);
+        Py_INCREF(val);
+        _call_delitem_hook(hooks, self, key, val);
+        Py_DECREF(key);
+        Py_DECREF(val);
+        Py_DECREF(hooks);
+    }
+    return res;
+}
+
+static PyObject *
+reaktome_dict_update(PyObject *self, PyObject *arg)
+{
+    PyObject *res = PyObject_CallMethod(self, "update", "O", arg);
+    if (!res) return NULL;
+
+    PyObject *hooks = activation_get_hooks(self);
+    if (hooks) {
+        PyObject *items = PyMapping_Items(arg);
+        if (items) {
+            Py_ssize_t n = PyList_GET_SIZE(items);
+            for (Py_ssize_t i = 0; i < n; i++) {
+                PyObject *pair = PyList_GET_ITEM(items, i);
+                PyObject *key = PyTuple_GET_ITEM(pair, 0);
+                PyObject *val = PyTuple_GET_ITEM(pair, 1);
+                Py_INCREF(key);
+                Py_INCREF(val);
+                _call_setitem_hook(hooks, self, key, Py_None, val);
+                Py_DECREF(key);
+                Py_DECREF(val);
+            }
+            Py_DECREF(items);
+        }
+        Py_DECREF(hooks);
+    }
+    return res;
+}
+
+/* --- defs --- */
+static PyMethodDef reaktome_dict_setitem_def = {
+    "__setitem__", (PyCFunction)reaktome_dict_setitem, METH_VARARGS, NULL
+};
+static PyMethodDef reaktome_dict_delitem_def = {
+    "__delitem__", (PyCFunction)reaktome_dict_delitem, METH_O, NULL
+};
+static PyMethodDef reaktome_dict_clear_def = {
+    "clear", (PyCFunction)reaktome_dict_clear, METH_NOARGS, NULL
+};
+static PyMethodDef reaktome_dict_pop_def = {
+    "pop", (PyCFunction)reaktome_dict_pop, METH_VARARGS, NULL
+};
+static PyMethodDef reaktome_dict_popitem_def = {
+    "popitem", (PyCFunction)reaktome_dict_popitem, METH_NOARGS, NULL
+};
+static PyMethodDef reaktome_dict_update_def = {
+    "update", (PyCFunction)reaktome_dict_update, METH_O, NULL
+};
 
 static int
+_install_dict_method(PyMethodDef *mdef)
+{
+    PyObject *func = PyCFunction_NewEx(mdef, NULL, NULL);
+    if (!func) return -1;
+    int rv = PyDict_SetItemString(PyDict_Type.tp_dict, mdef->ml_name, func);
+    Py_DECREF(func);
+    return rv;
+}
+
+int
 patch_dict(void)
 {
-    static int patched = 0;
-    if (patched) return 0;
-    patched = 1;
-
-    // Copy existing mapping table
-    reaktome_dict_as_mapping = *PyDict_Type.tp_as_mapping;
-
-    // Replace with our hooks
-    reaktome_dict_as_mapping.mp_ass_subscript = reaktome_dict_ass_sub;
-    PyDict_Type.tp_as_mapping = &reaktome_dict_as_mapping;
-
+    if (_install_dict_method(&reaktome_dict_setitem_def) < 0) return -1;
+    if (_install_dict_method(&reaktome_dict_delitem_def) < 0) return -1;
+    if (_install_dict_method(&reaktome_dict_clear_def) < 0) return -1;
+    if (_install_dict_method(&reaktome_dict_pop_def) < 0) return -1;
+    if (_install_dict_method(&reaktome_dict_popitem_def) < 0) return -1;
+    if (_install_dict_method(&reaktome_dict_update_def) < 0) return -1;
     return 0;
-}
-
-// Module init
-static PyMethodDef dict_methods[] = {
-    {"patch_dict", (PyCFunction)patch_dict, METH_NOARGS, "Patch dict hooks"},
-    {NULL, NULL, 0, NULL}
-};
-
-static int
-dict_exec(PyObject *m)
-{
-    __reaktome_setitem__ = PyObject_GetAttrString(m, "__reaktome_setitem__");
-    __reaktome_delitem__ = PyObject_GetAttrString(m, "__reaktome_delitem__");
-    if (!__reaktome_setitem__ || !__reaktome_delitem__)
-        return -1;
-    return 0;
-}
-
-static struct PyModuleDef_Slot dict_slots[] = {
-    {Py_mod_exec, dict_exec},
-    {0, NULL}
-};
-
-static struct PyModuleDef dict_module = {
-    PyModuleDef_HEAD_INIT,
-    "dict",
-    NULL,
-    0,
-    dict_methods,
-    dict_slots,
-    NULL,
-    NULL,
-    NULL
-};
-
-PyMODINIT_FUNC
-PyInit__reaktome_dict(void)
-{
-    return PyModuleDef_Init(&dict_module);
 }
