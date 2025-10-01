@@ -186,6 +186,16 @@ def __reaktome_delitem__(self, key: str, old: Any, new: Any) -> None:
     Changes.invoke(Change(self, key, old, None, source='item'))
 
 
+def __reaktome_additem__(self, key: str, old: Any, new: Any) -> None:
+    reaktiv8(new, parent=self, name=key, source='set')
+    Changes.invoke(Change(self, key, old, new, source='set'))
+
+
+def __reaktome_discarditem__(self, key: str, old: Any, new: Any) -> None:
+    deaktiv8(old, parent=self, name=key, source='set')
+    Changes.invoke(Change(self, key, old, None, source='set'))
+
+
 def reaktiv8(
     obj: Any,
     parent: Any = None,
