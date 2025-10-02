@@ -9,12 +9,12 @@
 /* mapping slot */
 static int (*orig_mp_ass_subscript)(PyObject *, PyObject *, PyObject *) = NULL;
 
-/* method table functions (C function pointers saved from PyDict_Type.tp_methods) */
-static PyCFunction orig_update = NULL;    /* METH_VARARGS */
-static PyCFunction orig_clear = NULL;     /* METH_NOARGS */
-static PyCFunction orig_pop = NULL;       /* METH_O */
-static PyCFunction orig_popitem = NULL;   /* METH_NOARGS */
-static PyCFunction orig_setdefault = NULL;/* METH_VARARGS */
+/* ORIGINAL METHOD OBJECTS (descriptors) - saved from PyDict_Type.tp_dict */
+static PyObject *orig_update = NULL;    /* descriptor object for update */
+static PyObject *orig_clear = NULL;     /* descriptor object for clear */
+static PyObject *orig_pop = NULL;       /* descriptor object for pop */
+static PyObject *orig_popitem = NULL;   /* descriptor object for popitem */
+static PyObject *orig_setdefault = NULL;/* descriptor object for setdefault */
 
 /* reentrancy guard to avoid wrapper->hook->wrapper loops */
 static __thread int inprogress = 0;
@@ -30,18 +30,6 @@ call_hook_advisory_dict(PyObject *self,
     if (reaktome_call_dunder(self, name, key, old, newv) < 0) {
         PyErr_Clear();
     }
-}
-
-/* ---------- find a methoddef in a type's tp_methods by name ---------- */
-static PyMethodDef *
-find_methoddef_in_type(PyTypeObject *tp, const char *name)
-{
-    PyMethodDef *m = tp->tp_methods;
-    if (!m) return NULL;
-    for (; m->ml_name != NULL; m++) {
-        if (strcmp(m->ml_name, name) == 0) return m;
-    }
-    return NULL;
 }
 
 /* ---------- slot trampoline: mp_ass_subscript ---------- */
@@ -121,6 +109,41 @@ call_setitem_for_mapping(PyObject *self, PyObject *mapping)
     return 0;
 }
 
+/* Build a new argument tuple with `self` prefixed to `args` */
+static PyObject *
+build_args_with_self(PyObject *self, PyObject *args)
+{
+    if (!args || !PyTuple_Check(args)) {
+        PyErr_SetString(PyExc_TypeError, "expected arg tuple");
+        return NULL;
+    }
+    Py_ssize_t n = PyTuple_Size(args);
+    PyObject *newt = PyTuple_New(n + 1);
+    if (!newt) return NULL;
+    Py_INCREF(self);
+    PyTuple_SET_ITEM(newt, 0, self); /* steals ref */
+    for (Py_ssize_t i = 0; i < n; i++) {
+        PyObject *it = PyTuple_GetItem(args, i); /* borrowed */
+        Py_INCREF(it);
+        PyTuple_SET_ITEM(newt, i + 1, it); /* steals ref */
+    }
+    return newt;
+}
+
+/* forward declarations for wrapper methoddefs (used when creating descriptors) */
+static PyObject *patched_dict_update(PyObject *self, PyObject *args);
+static PyObject *patched_dict_clear(PyObject *self, PyObject *Py_UNUSED(ignored));
+static PyObject *patched_dict_pop(PyObject *self, PyObject *arg);
+static PyObject *patched_dict_popitem(PyObject *self, PyObject *Py_UNUSED(ignored));
+static PyObject *patched_dict_setdefault(PyObject *self, PyObject *args);
+
+/* methoddef templates for descriptors we'll create in type dict */
+static PyMethodDef update_def = {"update", (PyCFunction)patched_dict_update, METH_VARARGS, "update (trampoline)"};
+static PyMethodDef clear_def  = {"clear",  (PyCFunction)patched_dict_clear,  METH_NOARGS,  "clear (trampoline)"};
+static PyMethodDef pop_def    = {"pop", (PyCFunction)patched_dict_pop, METH_VARARGS, "pop (trampoline)"};
+static PyMethodDef popitem_def= {"popitem",(PyCFunction)patched_dict_popitem,METH_NOARGS,  "popitem (trampoline)"};
+static PyMethodDef setdefault_def = {"setdefault", (PyCFunction)patched_dict_setdefault, METH_VARARGS, "setdefault (trampoline)"};
+
 /* update(self, ...) wrapper: best-effort — attempt to call setitem hook for input items */
 static PyObject *
 patched_dict_update(PyObject *self, PyObject *args)
@@ -133,11 +156,14 @@ patched_dict_update(PyObject *self, PyObject *args)
         Py_XINCREF(arg0);
     }
 
-    /* call original */
+    /* call original: use saved descriptor + self-prefixed args to avoid calling our wrapper */
     if (orig_update) {
-        res = orig_update(self, args);
+        PyObject *call_args = build_args_with_self(self, args);
+        if (!call_args) { Py_XDECREF(arg0); return NULL; }
+        res = PyObject_Call(orig_update, call_args, NULL);
+        Py_DECREF(call_args);
     } else {
-        /* fallback to calling Python-level attribute if orig missing */
+        /* fallback to calling Python-level attribute from the type */
         PyObject *tp = (PyObject *)Py_TYPE(self);
         PyObject *callable = PyObject_GetAttrString(tp, "update");
         if (!callable) {
@@ -152,6 +178,7 @@ patched_dict_update(PyObject *self, PyObject *args)
         Py_XDECREF(arg0);
         return NULL;
     }
+    Py_DECREF(res);
 
     /* After successful update, try to call setitem hook for items in arg0 (if mapping) */
     if (arg0 && PyMapping_Check(arg0)) {
@@ -174,7 +201,6 @@ patched_dict_update(PyObject *self, PyObject *args)
         }
     }
 
-    Py_DECREF(res);
     Py_XDECREF(arg0);
     Py_RETURN_NONE;
 }
@@ -192,8 +218,14 @@ patched_dict_clear(PyObject *self, PyObject *Py_UNUSED(ignored))
     if (inprogress) {
         /* If already in-progress, just forward to original to avoid recursion */
         if (orig_clear) {
-            res = orig_clear(self, NULL);
-            if (!res) return NULL;
+            PyObject *empty = PyTuple_New(0);
+            if (!empty) { Py_XDECREF(items); return NULL; }
+            PyObject *call_args = build_args_with_self(self, empty);
+            Py_DECREF(empty);
+            if (!call_args) { Py_XDECREF(items); return NULL; }
+            res = PyObject_Call(orig_clear, call_args, NULL);
+            Py_DECREF(call_args);
+            if (!res) { Py_XDECREF(items); return NULL; }
             Py_DECREF(res);
             Py_XDECREF(items);
             Py_RETURN_NONE;
@@ -207,7 +239,13 @@ patched_dict_clear(PyObject *self, PyObject *Py_UNUSED(ignored))
     inprogress = 1;
 
     if (orig_clear) {
-        res = orig_clear(self, NULL);
+        PyObject *empty = PyTuple_New(0);
+        if (!empty) { inprogress = 0; Py_XDECREF(items); return NULL; }
+        PyObject *call_args = build_args_with_self(self, empty);
+        Py_DECREF(empty);
+        if (!call_args) { inprogress = 0; Py_XDECREF(items); return NULL; }
+        res = PyObject_Call(orig_clear, call_args, NULL);
+        Py_DECREF(call_args);
         if (!res) {
             inprogress = 0;
             Py_XDECREF(items);
@@ -236,31 +274,51 @@ patched_dict_clear(PyObject *self, PyObject *Py_UNUSED(ignored))
     Py_RETURN_NONE;
 }
 
-/* pop(self, key) wrapper: call original; if popped value returned, call delitem hook */
+/* patched_dict_pop: accept (key[, default]) */
 static PyObject *
-patched_dict_pop(PyObject *self, PyObject *arg)
+patched_dict_pop(PyObject *self, PyObject *args)
 {
+    PyObject *key;
+    PyObject *default_value = NULL;
+
+    /* Accept 1 or 2 positional args */
+    if (!PyArg_UnpackTuple(args, "pop", 1, 2, &key, &default_value)) {
+        return NULL;
+    }
+
+    /* Check whether the key existed before calling the original (so we know whether to fire hooks) */
+    int had_key = PyDict_Contains(self, key);
+    if (had_key < 0) {
+        return NULL; /* error from Contains */
+    }
+
     PyObject *res = NULL;
 
+    /* Call the saved original descriptor (orig_pop) with self-prefixed args to avoid recursion */
     if (orig_pop) {
-        res = orig_pop(self, arg);
+        PyObject *call_args = build_args_with_self(self, args);
+        if (!call_args) return NULL;
+        res = PyObject_Call(orig_pop, call_args, NULL);
+        Py_DECREF(call_args);
     } else {
-        /* fallback to PyObject_CallMethod */
-        PyObject *callable = PyObject_GetAttrString((PyObject *)Py_TYPE(self), "pop");
+        /* Fallback: call the type-level method */
+        PyObject *tp = (PyObject *)Py_TYPE(self);
+        PyObject *callable = PyObject_GetAttrString(tp, "pop");
         if (!callable) return NULL;
-        PyObject *targs = PyTuple_Pack(1, arg);
-        if (!targs) { Py_DECREF(callable); return NULL; }
-        res = PyObject_Call(callable, targs, NULL);
-        Py_DECREF(targs);
+        res = PyObject_Call(callable, args, NULL);
         Py_DECREF(callable);
     }
 
-    if (!res) return NULL; /* may be exception */
+    if (!res) {
+        return NULL; /* propagate exception (KeyError when no default and missing key, etc.) */
+    }
 
-    /* res is the popped value (old). Fire del hook */
-    call_hook_advisory_dict(self, "__reaktome_delitem__", arg, res, NULL);
+    /* Only fire del hook if the key existed before (i.e., a real deletion occurred) */
+    if (had_key == 1) {
+        call_hook_advisory_dict(self, "__reaktome_delitem__", key, res, NULL);
+    }
 
-    return res; /* return popped value */
+    return res; /* newref from original pop */
 }
 
 /* popitem(self) wrapper: call original; if returns (k,v), fire del hook */
@@ -270,12 +328,21 @@ patched_dict_popitem(PyObject *self, PyObject *Py_UNUSED(ignored))
     PyObject *res = NULL;
 
     if (orig_popitem) {
-        res = orig_popitem(self, NULL);
+        PyObject *empty = PyTuple_New(0);
+        if (!empty) return NULL;
+        PyObject *call_args = build_args_with_self(self, empty);
+        Py_DECREF(empty);
+        if (!call_args) return NULL;
+        res = PyObject_Call(orig_popitem, call_args, NULL);
+        Py_DECREF(call_args);
     } else {
         /* fallback */
         PyObject *callable = PyObject_GetAttrString((PyObject *)Py_TYPE(self), "popitem");
         if (!callable) return NULL;
-        res = PyObject_Call(callable, PyTuple_New(0), NULL);
+        PyObject *empty = PyTuple_New(0);
+        if (!empty) { Py_DECREF(callable); return NULL; }
+        res = PyObject_Call(callable, empty, NULL);
+        Py_DECREF(empty);
         Py_DECREF(callable);
     }
 
@@ -291,12 +358,13 @@ patched_dict_popitem(PyObject *self, PyObject *Py_UNUSED(ignored))
     return res;
 }
 
+/* setdefault(self, ...) wrapper: handle binding and call hook when key absent */
 static PyObject *
 patched_dict_setdefault(PyObject *self, PyObject *args) {
     PyObject *key = NULL;
     PyObject *default_value = Py_None;
 
-    // peek at args
+    /* peek at args */
     if (!PyArg_UnpackTuple(args, "setdefault", 1, 2, &key, &default_value)) {
         return NULL;
     }
@@ -306,8 +374,11 @@ patched_dict_setdefault(PyObject *self, PyObject *args) {
 
     if (inprogress) {
         if (orig_setdefault) {
-            // Just forward the original args tuple, don't touch it
-            return orig_setdefault(self, args);
+            PyObject *call_args = build_args_with_self(self, args);
+            if (!call_args) return NULL;
+            PyObject *res = PyObject_Call(orig_setdefault, call_args, NULL);
+            Py_DECREF(call_args);
+            return res;
         } else {
             PyObject *callable = PyObject_GetAttrString((PyObject *)Py_TYPE(self), "setdefault");
             if (!callable) return NULL;
@@ -321,7 +392,10 @@ patched_dict_setdefault(PyObject *self, PyObject *args) {
 
     PyObject *res;
     if (orig_setdefault) {
-        res = orig_setdefault(self, args);
+        PyObject *call_args = build_args_with_self(self, args);
+        if (!call_args) { inprogress = 0; return NULL; }
+        res = PyObject_Call(orig_setdefault, call_args, NULL);
+        Py_DECREF(call_args);
     } else {
         PyObject *callable = PyObject_GetAttrString((PyObject *)Py_TYPE(self), "setdefault");
         if (!callable) { inprogress = 0; return NULL; }
@@ -335,7 +409,7 @@ patched_dict_setdefault(PyObject *self, PyObject *args) {
     }
 
     if (had_key == 0) {
-        // Only call hook if the key was absent before
+        /* Only call hook if the key was absent before */
         call_hook_advisory_dict(self, "__reaktome_setitem__", key, NULL, res);
     }
 
@@ -343,40 +417,56 @@ patched_dict_setdefault(PyObject *self, PyObject *args) {
     return res;
 }
 
-/* ---------- install wrappers into PyDict_Type.tp_methods ---------- */
-
-/* Find methoddefs for target names and swap ml_meth -> our wrappers.
-   Save original ml_meth into orig_* function pointers. */
+/* ---------- install wrappers into PyDict_Type.tp_dict (shadowing in dict) ---------- */
 
 static int
 install_method_wrappers_for_dict(void)
 {
-    PyMethodDef *m;
+    PyObject *dict = PyType_GetDict(&PyDict_Type); /* borrowed */
+    if (!dict) return -1;
 
-    m = find_methoddef_in_type(&PyDict_Type, "update");
-    if (!m) return -1;
-    orig_update = m->ml_meth;
-    m->ml_meth = (PyCFunction)patched_dict_update;
+    PyObject *orig;
+    PyObject *func;
 
-    m = find_methoddef_in_type(&PyDict_Type, "clear");
-    if (!m) return -1;
-    orig_clear = m->ml_meth;
-    m->ml_meth = (PyCFunction)patched_dict_clear;
+    /* update */
+    orig = PyDict_GetItemString(dict, "update"); /* borrowed */
+    if (orig) { Py_XINCREF(orig); orig_update = orig; }
+    func = (PyObject *)PyDescr_NewMethod(&PyDict_Type, &update_def);
+    if (!func) return -1;
+    if (PyDict_SetItemString(dict, "update", func) < 0) { Py_DECREF(func); return -1; }
+    Py_DECREF(func);
 
-    m = find_methoddef_in_type(&PyDict_Type, "pop");
-    if (!m) return -1;
-    orig_pop = m->ml_meth;
-    m->ml_meth = (PyCFunction)patched_dict_pop;
+    /* clear */
+    orig = PyDict_GetItemString(dict, "clear");
+    if (orig) { Py_XINCREF(orig); orig_clear = orig; }
+    func = (PyObject *)PyDescr_NewMethod(&PyDict_Type, &clear_def);
+    if (!func) return -1;
+    if (PyDict_SetItemString(dict, "clear", func) < 0) { Py_DECREF(func); return -1; }
+    Py_DECREF(func);
 
-    m = find_methoddef_in_type(&PyDict_Type, "popitem");
-    if (!m) return -1;
-    orig_popitem = m->ml_meth;
-    m->ml_meth = (PyCFunction)patched_dict_popitem;
+    /* pop */
+    orig = PyDict_GetItemString(dict, "pop");
+    if (orig) { Py_XINCREF(orig); orig_pop = orig; }
+    func = (PyObject *)PyDescr_NewMethod(&PyDict_Type, &pop_def);
+    if (!func) return -1;
+    if (PyDict_SetItemString(dict, "pop", func) < 0) { Py_DECREF(func); return -1; }
+    Py_DECREF(func);
 
-    m = find_methoddef_in_type(&PyDict_Type, "setdefault");
-    if (!m) return -1;
-    orig_setdefault = m->ml_meth;
-    m->ml_meth = (PyCFunction)patched_dict_setdefault;
+    /* popitem */
+    orig = PyDict_GetItemString(dict, "popitem");
+    if (orig) { Py_XINCREF(orig); orig_popitem = orig; }
+    func = (PyObject *)PyDescr_NewMethod(&PyDict_Type, &popitem_def);
+    if (!func) return -1;
+    if (PyDict_SetItemString(dict, "popitem", func) < 0) { Py_DECREF(func); return -1; }
+    Py_DECREF(func);
+
+    /* setdefault */
+    orig = PyDict_GetItemString(dict, "setdefault");
+    if (orig) { Py_XINCREF(orig); orig_setdefault = orig; }
+    func = (PyObject *)PyDescr_NewMethod(&PyDict_Type, &setdefault_def);
+    if (!func) return -1;
+    if (PyDict_SetItemString(dict, "setdefault", func) < 0) { Py_DECREF(func); return -1; }
+    Py_DECREF(func);
 
     /* inform runtime */
     PyType_Modified(&PyDict_Type);
