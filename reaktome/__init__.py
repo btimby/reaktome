@@ -2,7 +2,6 @@ import re
 import logging
 
 from fnmatch import fnmatch
-from types import MethodType
 from typing import Any, Optional, Callable, Union
 
 import _reaktome as _r
@@ -273,7 +272,7 @@ def deaktiv8(
 class Reaktome:
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        reaktiv8(self, parent=self, name=self.__class__.__name__)
+        reaktiv8(self, parent=None, name=self.__class__.__name__)
 
     def __post_init__(self) -> None:
-        reaktiv8(self, parent=self, name=self.__class__.__name__)
+        reaktiv8(self, parent=None, name=self.__class__.__name__)

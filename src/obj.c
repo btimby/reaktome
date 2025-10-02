@@ -14,7 +14,7 @@
   - trampoline calls original (or generic fallback) then advisory hooks via reaktome_call_dunder.
 */
 
-/* module-local dict mapping type -> capsule(original tp_setattro). newref or NULL */
+/* module-local dict mapping type -> capsule(original tp_setattro). */
 static PyObject *type_orig_capsules = NULL;
 
 /* Helper: call activation dunder and swallow exceptions */
@@ -46,20 +46,17 @@ tramp_tp_setattro(PyObject *self, PyObject *name, PyObject *value)
         }
     }
 
-    /* Call advisory hook first (advisory semantics). Swallow hook errors. */
-    const char *dunder_call = value ? "__setattr__" : "__delattr__";
+    /* Advisory pre-mutation hook: distinguish between setattr and delattr */
+    const char *dunder_call = (value == NULL) ? "__delattr__" : "__setattr__";
     call_hook_advisory_obj(self, dunder_call, name, old, value);
 
-    /* Find original pointer to call:
-       1) prefer per-instance capsule stored in activation side-table
-       2) else fall back to per-type original from type_orig_capsules
-       3) else generic fallback */
+    /* Find original pointer to call */
     void *orig_ptr = NULL;
 
     PyObject *hooks = activation_get_hooks(self); /* newref or NULL */
     if (hooks) {
-        const char *inst_key = value ? "__orig_setattr__" : "__orig_delattr__";
-        PyObject *caps = PyDict_GetItemString(hooks, inst_key); /* borrowed or NULL */
+        const char *inst_key = (value == NULL) ? "__orig_delattr__" : "__orig_setattr__";
+        PyObject *caps = PyDict_GetItemString(hooks, inst_key); /* borrowed */
         if (caps) {
             orig_ptr = PyCapsule_GetPointer(caps, NULL);
             if (!orig_ptr && PyErr_Occurred()) {
@@ -70,12 +67,11 @@ tramp_tp_setattro(PyObject *self, PyObject *name, PyObject *value)
         }
         Py_DECREF(hooks);
     } else {
-        /* No side-table — not fatal, fall back below */
         PyErr_Clear();
     }
 
     if (!orig_ptr && type_orig_capsules) {
-        PyObject *caps_type = PyDict_GetItem(type_orig_capsules, (PyObject *)Py_TYPE(self)); /* borrowed or NULL */
+        PyObject *caps_type = PyDict_GetItem(type_orig_capsules, (PyObject *)Py_TYPE(self)); /* borrowed */
         if (caps_type) {
             orig_ptr = PyCapsule_GetPointer(caps_type, NULL);
             if (!orig_ptr && PyErr_Occurred()) {
@@ -85,20 +81,15 @@ tramp_tp_setattro(PyObject *self, PyObject *name, PyObject *value)
         }
     }
 
-    int rc = -1;
+    int rc;
     if (orig_ptr) {
         setattrofunc orig = (setattrofunc)orig_ptr;
-        if (orig) {
-            rc = orig(self, name, value);
-        } else {
-            /* defensive fallback */
-            if (value == NULL) rc = PyObject_GenericSetAttr(self, name, NULL);
-            else rc = PyObject_GenericSetAttr(self, name, value);
-        }
+        rc = orig(self, name, value);
     } else {
-        /* No saved original found — use generic behavior */
-        if (value == NULL) rc = PyObject_GenericSetAttr(self, name, NULL);
-        else rc = PyObject_GenericSetAttr(self, name, value);
+        /* Fallback to generic if no original found */
+        rc = (value == NULL)
+            ? PyObject_GenericSetAttr(self, name, NULL)   /* true delattr */
+            : PyObject_GenericSetAttr(self, name, value); /* setattr */
     }
 
     if (rc < 0) {
@@ -106,7 +97,9 @@ tramp_tp_setattro(PyObject *self, PyObject *name, PyObject *value)
         return -1;
     }
 
-    /* On success, call advisory hook that indicates actual mutation */
+    /* Post-mutation hook: distinguish between actual setattr vs actual delattr.
+       This is where we need __reaktome_delattr__, otherwise setattr(x, None)
+       and delattr(x) would look identical. */
     if (value == NULL) {
         call_hook_advisory_obj(self, "__reaktome_delattr__", name, old, NULL);
     } else {
@@ -117,13 +110,13 @@ tramp_tp_setattro(PyObject *self, PyObject *name, PyObject *value)
     return 0;
 }
 
-/* Ensure trampolines installed once per heap (user-defined) type.
-   Save the real original tp_setattro in module-local dict BEFORE overwriting. */
+/* Ensure trampolines installed once per heap (user-defined) type. */
 static int
 ensure_type_trampolines_installed(PyTypeObject *tp)
 {
     if (!(tp->tp_flags & Py_TPFLAGS_HEAPTYPE)) {
-        PyErr_SetString(PyExc_RuntimeError, "patch_obj: target type is not a heap (user-defined) type");
+        PyErr_SetString(PyExc_RuntimeError,
+                        "patch_obj: target type is not a heap (user-defined) type");
         return -1;
     }
 
@@ -132,17 +125,15 @@ ensure_type_trampolines_installed(PyTypeObject *tp)
     if (already) {
         Py_DECREF(already);
         return 0;
-    } else {
-        if (PyErr_Occurred()) PyErr_Clear();
+    } else if (PyErr_Occurred()) {
+        PyErr_Clear();
     }
 
-    /* Prepare module-local dict if needed */
     if (!type_orig_capsules) {
         type_orig_capsules = PyDict_New();
         if (!type_orig_capsules) return -1;
     }
 
-    /* If no per-type original stored yet, capture the current tp_setattro as original */
     if (!PyDict_GetItem(type_orig_capsules, (PyObject *)tp)) {
         if (tp->tp_setattro) {
             PyObject *caps = PyCapsule_New((void *)tp->tp_setattro, NULL, NULL);
@@ -151,16 +142,12 @@ ensure_type_trampolines_installed(PyTypeObject *tp)
                 Py_DECREF(caps);
                 return -1;
             }
-            Py_DECREF(caps); /* dict owns it */
-        } else {
-            /* If type has no tp_setattro, we won't store anything; trampoline will use generic fallback */
+            Py_DECREF(caps);
         }
     }
 
-    /* Now install our trampoline into the type slot */
     tp->tp_setattro = tramp_tp_setattro;
 
-    /* Mark the type as patched (sentinel). We don't store originals on the type object. */
     if (PyObject_SetAttrString((PyObject *)tp, "__reaktome_type_patched__", Py_True) < 0) {
         PyErr_Clear();
     }
@@ -169,9 +156,7 @@ ensure_type_trampolines_installed(PyTypeObject *tp)
     return 0;
 }
 
-/* Store the current type tp_setattro pointer into the activation side-table for inst,
-   but avoid capturing the trampoline itself: if the type is already patched (i.e. its
-   tp_setattro == tramp_tp_setattro), use the per-type capsule saved in type_orig_capsules. */
+/* Store the type’s slot originals into the activation side-table for inst. */
 static int
 store_type_slot_originals_in_side_table(PyObject *inst)
 {
@@ -181,10 +166,9 @@ store_type_slot_originals_in_side_table(PyObject *inst)
 
     void *orig_ptr_for_instance = NULL;
 
-    /* If type's slot equals the trampoline, get original from type_orig_capsules */
     if (tp->tp_setattro == tramp_tp_setattro) {
         if (type_orig_capsules) {
-            PyObject *caps_type = PyDict_GetItem(type_orig_capsules, (PyObject *)tp); /* borrowed or NULL */
+            PyObject *caps_type = PyDict_GetItem(type_orig_capsules, (PyObject *)tp);
             if (caps_type) {
                 orig_ptr_for_instance = PyCapsule_GetPointer(caps_type, NULL);
                 if (!orig_ptr_for_instance && PyErr_Occurred()) {
@@ -194,7 +178,6 @@ store_type_slot_originals_in_side_table(PyObject *inst)
             }
         }
     } else {
-        /* Type not patched yet; capture the current tp_setattro (may be NULL) */
         if (tp->tp_setattro) {
             orig_ptr_for_instance = (void *)tp->tp_setattro;
         }
@@ -241,32 +224,39 @@ py_patch_obj(PyObject *self, PyObject *args)
         return NULL;
 
     if (!PyObject_HasAttrString(inst, "__dict__")) {
-        PyErr_SetString(PyExc_TypeError, "patch_obj: instance has no __dict__");
+        PyErr_SetString(PyExc_TypeError,
+                        "patch_obj: instance has no __dict__");
         return NULL;
     }
 
-    /* 1) store per-instance originals (safe: uses type_orig_capsules if type already patched) */
-    if (store_type_slot_originals_in_side_table(inst) < 0) {
-        return NULL;
+    /* --- NEW GUARD: if already activated, just merge dunders and return --- */
+    PyObject *hooks = activation_get_hooks(inst); /* newref or NULL */
+    if (hooks) {
+        /* Already patched: skip re-installing trampolines */
+        Py_DECREF(hooks);
+        if (activation_merge(inst, dunders) < 0)
+            return NULL;
+        Py_RETURN_NONE;
     }
+    PyErr_Clear(); /* in case activation_get_hooks set KeyError */
 
-    /* 2) install trampoline on the instance's type (heap types only) */
+    /* Not yet activated: store originals and patch type */
+    if (store_type_slot_originals_in_side_table(inst) < 0)
+        return NULL;
+
     PyTypeObject *tp = Py_TYPE(inst);
-    if (ensure_type_trampolines_installed(tp) < 0) {
+    if (ensure_type_trampolines_installed(tp) < 0)
         return NULL;
-    }
 
-    /* 3) finally merge user-supplied dunders into activation side-table */
-    if (activation_merge(inst, dunders) < 0) {
+    if (activation_merge(inst, dunders) < 0)
         return NULL;
-    }
 
     Py_RETURN_NONE;
 }
 
-/* Module method table and registration */
 static PyMethodDef obj_methods[] = {
-    {"patch_obj", (PyCFunction)py_patch_obj, METH_VARARGS, "Activate object instance with dunders (or None to clear)"},
+    {"patch_obj", (PyCFunction)py_patch_obj, METH_VARARGS,
+     "Activate object instance with dunders (or None to clear)"},
     {NULL, NULL, 0, NULL}
 };
 

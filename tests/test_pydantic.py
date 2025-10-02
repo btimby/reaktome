@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 from pydantic import BaseModel
 from pydantic_collections import BaseCollectionModel
 
-from reaktome import Reaktome, Changes, print_change
+from reaktome import Reaktome, Changes
 
 
 class FooModel(Reaktome, BaseModel):
@@ -31,7 +31,8 @@ class BarModelCollection(Reaktome, BaseCollectionModel[BarModel]):
 class ReaktomeTestCase(unittest.TestCase):
     def setUp(self):
         self.bar = BarModel(id='abc123', name='foo')
-        Changes.on(self.bar, print_change)
+        self.changes = []
+        Changes.on(self.bar, self.changes.append)
 
     def test_reaktome_model(self):
         self.bar.name = 'bar'
