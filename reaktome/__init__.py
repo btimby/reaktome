@@ -15,7 +15,13 @@ REVERSES = {}
 
 
 class Change:
-    def __init__(self, obj: Any, key: Union[str, int], old: Any, new: Any, source: str) -> None:
+    def __init__(self,
+                 obj: Any,
+                 key: Union[str, int],
+                 old: Any,
+                 new: Any,
+                 source: str,
+                 ) -> None:
         self.obj = obj
         self.key = key
         self.old = old
@@ -64,7 +70,15 @@ class BackRef:
             return
 
         name = self.make_name(change.key, change.source)
-        Changes.invoke(Change(self.parent, name, change.old, change.new, source=self.source))
+        Changes.invoke(
+            Change(
+                self.parent,
+                name,
+                change.old,
+                change.new,
+                source=self.source
+            )
+        )
 
 
 class ChangeFilter:
@@ -88,7 +102,9 @@ class Changes:
 
     def __init__(self):
         self.backrefs: set[BackRef] = set()
-        self.callbacks: list[tuple[Callable[Any, bool], Callable[Any, Any]]] = []
+        self.callbacks: list[
+            tuple[Callable[Any, bool], Callable[Any, Any]]
+        ] = []
 
     def _add_backref(self, backref: BackRef) -> None:
         self.backrefs.add(backref)
@@ -202,7 +218,8 @@ def reaktiv8(
     source: str = "attr",
 ) -> None:
     """
-    Activate reaktome hooks on an object instance and register it for change tracking.
+    Activate reaktome hooks on an object instance and register it for change
+    tracking.
     """
 
     if isinstance(obj, list):
@@ -246,7 +263,8 @@ def deaktiv8(
     source: str = "attr",
 ) -> None:
     """
-    Deactivate reaktome hooks on an object instance and remove it from change tracking.
+    Deactivate reaktome hooks on an object instance and remove it from change
+    tracking.
     """
 
     if isinstance(obj, list):
