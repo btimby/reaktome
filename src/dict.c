@@ -188,30 +188,51 @@ patched_dict_clear(PyObject *self, PyObject *Py_UNUSED(ignored))
     if (!items && PyErr_Occurred()) return NULL;
 
     PyObject *res = NULL;
+
+    if (inprogress) {
+        /* If already in-progress, just forward to original to avoid recursion */
+        if (orig_clear) {
+            res = orig_clear(self, NULL);
+            if (!res) return NULL;
+            Py_DECREF(res);
+            Py_XDECREF(items);
+            Py_RETURN_NONE;
+        } else {
+            PyDict_Clear(self);  /* void */
+            Py_XDECREF(items);
+            Py_RETURN_NONE;
+        }
+    }
+
+    inprogress = 1;
+
     if (orig_clear) {
         res = orig_clear(self, NULL);
+        if (!res) {
+            inprogress = 0;
+            Py_XDECREF(items);
+            return NULL;
+        }
+        Py_DECREF(res);
     } else {
-        /* fallback */
+        /* fallback: clear the dict (void) and continue to fire delitem hooks below */
         PyDict_Clear(self);
-        Py_RETURN_NONE;
     }
-
-    if (!res) {
-        Py_XDECREF(items);
-        return NULL;
-    }
-    Py_DECREF(res);
 
     /* Fire delitem for each old item */
-    Py_ssize_t n = PyList_Size(items);
-    for (Py_ssize_t i = 0; i < n; i++) {
-        PyObject *tup = PyList_GetItem(items, i); /* borrowed */
-        if (!tup) continue;
-        PyObject *k = PyTuple_GetItem(tup, 0); /* borrowed */
-        PyObject *v = PyTuple_GetItem(tup, 1); /* borrowed */
-        call_hook_advisory_dict(self, "__reaktome_delitem__", k, v, NULL);
+    if (items) {
+        Py_ssize_t n = PyList_Size(items);
+        for (Py_ssize_t i = 0; i < n; i++) {
+            PyObject *tup = PyList_GetItem(items, i); /* borrowed */
+            if (!tup) continue;
+            PyObject *k = PyTuple_GetItem(tup, 0); /* borrowed */
+            PyObject *v = PyTuple_GetItem(tup, 1); /* borrowed */
+            call_hook_advisory_dict(self, "__reaktome_delitem__", k, v, NULL);
+        }
+        Py_DECREF(items);
     }
-    Py_DECREF(items);
+
+    inprogress = 0;
     Py_RETURN_NONE;
 }
 
@@ -270,24 +291,52 @@ patched_dict_popitem(PyObject *self, PyObject *Py_UNUSED(ignored))
     return res;
 }
 
-/* setdefault(self, key, default=None): if key inserted, fire setitem hook */
 static PyObject *
 patched_dict_setdefault(PyObject *self, PyObject *args) {
-    PyObject *key, *default_value = Py_None;
+    PyObject *key = NULL;
+    PyObject *default_value = Py_None;
+
+    // peek at args
     if (!PyArg_UnpackTuple(args, "setdefault", 1, 2, &key, &default_value)) {
         return NULL;
     }
 
+    int had_key = PyDict_Contains(self, key);
+    if (had_key < 0) return NULL; /* error */
+
     if (inprogress) {
-        return orig_setdefault(self, args);
+        if (orig_setdefault) {
+            // Just forward the original args tuple, don't touch it
+            return orig_setdefault(self, args);
+        } else {
+            PyObject *callable = PyObject_GetAttrString((PyObject *)Py_TYPE(self), "setdefault");
+            if (!callable) return NULL;
+            PyObject *res = PyObject_Call(callable, args, NULL);
+            Py_DECREF(callable);
+            return res;
+        }
     }
 
     inprogress = 1;
 
-    // Call original setdefault
-    PyObject *res = orig_setdefault(self, args);
-    if (res != NULL) {
-        __reaktome_setitem__(self, key, res);  // trigger hook
+    PyObject *res;
+    if (orig_setdefault) {
+        res = orig_setdefault(self, args);
+    } else {
+        PyObject *callable = PyObject_GetAttrString((PyObject *)Py_TYPE(self), "setdefault");
+        if (!callable) { inprogress = 0; return NULL; }
+        res = PyObject_Call(callable, args, NULL);
+        Py_DECREF(callable);
+    }
+
+    if (!res) {
+        inprogress = 0;
+        return NULL;
+    }
+
+    if (had_key == 0) {
+        // Only call hook if the key was absent before
+        call_hook_advisory_dict(self, "__reaktome_setitem__", key, NULL, res);
     }
 
     inprogress = 0;
