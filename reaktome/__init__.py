@@ -157,7 +157,6 @@ class Changes:
 
 def __reaktome_setattr__(self, name: str, old: Any, new: Any) -> None:
     "Used by Obj."
-    import pdb; pdb.set_trace()
     if name.startswith('_'):
         return new
     reaktiv8(new, parent=self, name=name, source='attr')
