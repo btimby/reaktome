@@ -211,6 +211,12 @@ def __reaktome_discarditem__(self, key: str, old: Any, new: Any) -> None:
     Changes.invoke(Change(self, key, old, None, source='set'))
 
 
+def __reaktome_append__(self, new: any) -> None:
+    i = len(self)
+    self.__reaktome_append__(new)
+    Changes.invoke(Change(self, i, None, new, source='item'))
+
+
 def reaktiv8(
     obj: Any,
     name: Optional[str] = None,
@@ -251,6 +257,8 @@ def reaktiv8(
         _r.patch_obj(obj, {
             "__reaktome_setattr__": __reaktome_setattr__,
             "__reaktome_delattr__": __reaktome_delattr__,
+            "__reaktome_setitem__": __reaktome_setitem__,
+            "__reaktome_delitem__": __reaktome_delitem__,
         })
         Changes.add_backref(obj, BackRef(parent, obj, name, source="attr"))
 

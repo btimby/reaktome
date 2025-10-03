@@ -39,3 +39,20 @@ class ReaktomeTestCase(unittest.TestCase):
         foo = self.bar.foo = FooModel(id='xyz098', name='foo')
         foo.name = 'baz'
         self.bar.foo.name = 'ben'
+
+    def test_model_dump(self):
+        self.assertEqual(
+            {'foo': None, 'id': 'abc123', 'name': 'foo'},
+            self.bar.model_dump(),
+        )
+
+
+class ReaktomeCollectionTestCase(unittest.TestCase):
+    def setUp(self):
+        self.bar_coll = BarModelCollection()
+        self.changes = []
+        Changes.on(self.bar_coll, self.changes.append)
+
+    def test_append(self):
+        self.bar_coll.append(BarModel(id='abc123', name='foo'))
+        self.assertEqual(len(self.changes), 1)
