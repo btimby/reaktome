@@ -211,7 +211,7 @@ def __reaktome_discarditem__(self, key: str, old: Any, new: Any) -> None:
     Changes.invoke(Change(self, key, old, None, source='set'))
 
 
-def __reaktome_append__(self, new: any) -> None:
+def __reaktome_append__(self, new: Any) -> None:
     i = len(self)
     self.__reaktome_append__(new)
     Changes.invoke(Change(self, i, None, new, source='item'))
