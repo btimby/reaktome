@@ -31,6 +31,11 @@ publish: package
 	uv run twine upload dist/*
 
 
+build: .venv
+	uv pip install -e .
+
+
 .PHONY: clean
 clean:
-	rm -rf dist
+	rm -rf build/ dist/ *.egg-info
+	find . -name "_reaktome*.so" -delete	

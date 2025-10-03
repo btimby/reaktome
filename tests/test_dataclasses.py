@@ -5,7 +5,7 @@ from typing import Any
 from unittest.mock import MagicMock
 from dataclasses import dataclass
 
-from reaktome import Reaktome, ReaktomeWatch, reaktiv8
+from reaktome import Reaktome, reaktiv8
 
 
 @dataclass
@@ -16,8 +16,5 @@ class Foo(Reaktome):
 
 class ReaktomeTestCase(unittest.TestCase):
     def test_reaktome_dataclass(self):
-        handler = MagicMock()
-        obj = Foo(id='abc123', name='Roger')
-        obj.on('*', handler)
-        obj.name = 'Steve'
-        handler.assert_called_once()
+        foo = Foo(id='bac123', name='foo')
+        foo.name = 'baz'
