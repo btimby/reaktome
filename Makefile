@@ -27,7 +27,7 @@ package: .venv
 	uv run python3 -m build --wheel
 
 
-publish: package
+publish: .venv
 	uv run twine upload dist/*
 
 
