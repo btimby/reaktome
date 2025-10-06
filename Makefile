@@ -28,7 +28,7 @@ package: .venv
 
 
 publish: .venv
-	uv run twine upload dist/*
+	uv run twine upload dist/reaktome-*-manylinux?_*_*.whl
 
 
 build: .venv
