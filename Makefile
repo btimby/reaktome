@@ -23,12 +23,15 @@ version: .venv
 	uv run bumpversion --dry-run --allow-dirty --list patch | grep current_version
 
 
-package: .venv
-	uv run python3 -m build --wheel
+dist/reaktome-*.tar.gz:
+	uv run python3 -m build --sdist
 
 
-publish: .venv
-	uv run twine upload dist/reaktome-*-manylinux?_*_*.whl
+package: .venv dist/reaktome-*.tar.gz
+
+
+publish: package
+	uv run twine upload sdist
 
 
 build: .venv
