@@ -31,7 +31,7 @@ package: .venv dist/reaktome-*.tar.gz
 
 
 publish: package
-	uv run twine upload sdist
+	uv run twine upload dist/*.tar.gz
 
 
 build: .venv
