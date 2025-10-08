@@ -308,3 +308,10 @@ class Reaktome:
 
     def __post_init__(self) -> None:
         reaktiv8(self, parent=None, name=self.__class__.__name__)
+
+
+def receiver(obj: Any, pattern: str = '*', regex: bool = False) -> Callable:
+    def wrapper(f):
+        Changes.on(obj, f, pattern=pattern, regex=regex)
+        return f
+    return wrapper
