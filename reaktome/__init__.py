@@ -32,7 +32,7 @@ class BackRef:
     def __init__(self,
                  parent: Any,
                  obj: Any,
-                 name: str,
+                 name: Union[int, str],
                  source: str = 'attr',
                  ) -> None:
         self.parent = parent
@@ -110,7 +110,8 @@ class Changes:
         self.backrefs.discard(backref)
 
     def _invoke(self, change: Change) -> None:
-        LOGGER.debug(f'⚡ {change.key}: {repr(change.old)} → {repr(change.new)}')
+        LOGGER.debug(
+            f'⚡ {change.key}: {repr(change.old)} → {repr(change.new)}')
         for r in self.backrefs:
             try:
                 r(change)
@@ -171,7 +172,8 @@ class Changes:
 
 def __reaktome_setattr__(self, name: str, old: Any, new: Any) -> None:
     "Used by Obj."
-    LOGGER.debug('__reaktome_setattr__(%s, %s, %s)', name, repr(old), repr(new))
+    LOGGER.debug(
+        '__reaktome_setattr__(%s, %s, %s)', name, repr(old), repr(new))
     if name.startswith('_'):
         LOGGER.debug('Skipping private/protected attr: %s', name)
         return new
@@ -183,7 +185,8 @@ def __reaktome_setattr__(self, name: str, old: Any, new: Any) -> None:
 
 def __reaktome_delattr__(self, name: str, old: Any, new: Any) -> None:
     "Used by Obj."
-    LOGGER.debug('__reaktome_delattr__(%s, %s, %s)', name, repr(old), repr(new))
+    LOGGER.debug(
+        '__reaktome_delattr__(%s, %s, %s)', name, repr(old), repr(new))
     if name.startswith('_'):
         LOGGER.debug('Skipping private/protected attr: %s', name)
         return
@@ -191,7 +194,11 @@ def __reaktome_delattr__(self, name: str, old: Any, new: Any) -> None:
     Changes.invoke(Change(self, name, old, None, source='attr'))
 
 
-def __reaktome_setitem__(self, key: Union[int, str], old: Any, new: Any) -> None:
+def __reaktome_setitem__(self,
+                         key: Union[int, str],
+                         old: Any,
+                         new: Any,
+                         ) -> None:
     "Used by Dict, List."
     LOGGER.debug('__reaktome_setitem__(%s, %s, %s)', key, repr(old), repr(new))
     reaktiv8(new, key, parent=self, source='item')
@@ -199,28 +206,41 @@ def __reaktome_setitem__(self, key: Union[int, str], old: Any, new: Any) -> None
     Changes.invoke(Change(self, key, old, new, source='item'))
 
 
-def __reaktome_delitem__(self, key: Union[int, str], old: Any, new: Any) -> None:
+def __reaktome_delitem__(self,
+                         key: Union[int, str],
+                         old: Any,
+                         new: Any,
+                         ) -> None:
     "Used by Dict, List."
     LOGGER.debug('__reaktome_delitem__(%s, %s, %s)', key, repr(old), repr(new))
     deaktiv8(old, key, parent=self, source='item')
     Changes.invoke(Change(self, key, old, None, source='item'))
 
 
-def __reaktome_additem__(self, key: Union[int, str], old: Any, new: Any) -> None:
+def __reaktome_additem__(self,
+                         key: Union[int, str],
+                         old: Any,
+                         new: Any,
+                         ) -> None:
     LOGGER.debug('__reaktome_additem__(%s, %s, %s)', key, repr(old), repr(new))
     reaktiv8(new, key, parent=self, source='set')
     Changes.invoke(Change(self, key, old, new, source='set'))
 
 
-def __reaktome_discarditem__(self, key: Union[int, str, None], old: Any, new: Any) -> None:
-    LOGGER.debug('__reaktome_discarditem__(%s, %s, %s)', key, repr(old), repr(new))
+def __reaktome_discarditem__(self,
+                             key: Union[int, str],
+                             old: Any,
+                             new: Any,
+                             ) -> None:
+    LOGGER.debug(
+        '__reaktome_discarditem__(%s, %s, %s)', key, repr(old), repr(new))
     deaktiv8(old, key, parent=self, source='set')
     Changes.invoke(Change(self, key, old, None, source='set'))
 
 
 def reaktiv8(
     obj: Any,
-    name: Optional[str] = None,
+    name: Optional[Union[str, int]] = None,
     parent: Any = None,
     source: str = "attr",
 ) -> None:
@@ -273,7 +293,7 @@ def reaktiv8(
 
 def deaktiv8(
     obj: Any,
-    name: Optional[str] = None,
+    name: Optional[Union[str, int]] = None,
     parent: Any = None,
     source: str = "attr",
 ) -> None:
