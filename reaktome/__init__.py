@@ -27,15 +27,12 @@ class Change:
         self.new = new
         self.source = source
 
-    def print(self) -> None:
-        print(f'⚡ {self.key}: {repr(self.old)} → {repr(self.new)}')
-
 
 class BackRef:
     def __init__(self,
                  parent: Any,
                  obj: Any,
-                 name: str,
+                 name: Union[int, str],
                  source: str = 'attr',
                  ) -> None:
         self.parent = parent
@@ -113,6 +110,8 @@ class Changes:
         self.backrefs.discard(backref)
 
     def _invoke(self, change: Change) -> None:
+        LOGGER.debug(
+            f'⚡ {change.key}: {repr(change.old)} → {repr(change.new)}')
         for r in self.backrefs:
             try:
                 r(change)
@@ -125,6 +124,7 @@ class Changes:
             if not filter(change):
                 continue
 
+            LOGGER.debug('Invoking callback: %s', repr(cb))
             try:
                 cb(change)
 
@@ -172,7 +172,10 @@ class Changes:
 
 def __reaktome_setattr__(self, name: str, old: Any, new: Any) -> None:
     "Used by Obj."
+    LOGGER.debug(
+        '__reaktome_setattr__(%s, %s, %s)', name, repr(old), repr(new))
     if name.startswith('_'):
+        LOGGER.debug('Skipping private/protected attr: %s', name)
         return new
     reaktiv8(new, name, parent=self, source='attr')
     deaktiv8(old, name, parent=self, source='attr')
@@ -182,44 +185,62 @@ def __reaktome_setattr__(self, name: str, old: Any, new: Any) -> None:
 
 def __reaktome_delattr__(self, name: str, old: Any, new: Any) -> None:
     "Used by Obj."
+    LOGGER.debug(
+        '__reaktome_delattr__(%s, %s, %s)', name, repr(old), repr(new))
     if name.startswith('_'):
+        LOGGER.debug('Skipping private/protected attr: %s', name)
         return
     deaktiv8(old, name, parent=self, source='attr')
     Changes.invoke(Change(self, name, old, None, source='attr'))
 
 
-def __reaktome_setitem__(self, key: str, old: Any, new: Any) -> None:
+def __reaktome_setitem__(self,
+                         key: Union[int, str],
+                         old: Any,
+                         new: Any,
+                         ) -> None:
     "Used by Dict, List."
+    LOGGER.debug('__reaktome_setitem__(%s, %s, %s)', key, repr(old), repr(new))
     reaktiv8(new, key, parent=self, source='item')
     deaktiv8(old, key, parent=self, source='item')
     Changes.invoke(Change(self, key, old, new, source='item'))
 
 
-def __reaktome_delitem__(self, key: str, old: Any, new: Any) -> None:
+def __reaktome_delitem__(self,
+                         key: Union[int, str],
+                         old: Any,
+                         new: Any,
+                         ) -> None:
     "Used by Dict, List."
+    LOGGER.debug('__reaktome_delitem__(%s, %s, %s)', key, repr(old), repr(new))
     deaktiv8(old, key, parent=self, source='item')
     Changes.invoke(Change(self, key, old, None, source='item'))
 
 
-def __reaktome_additem__(self, key: str, old: Any, new: Any) -> None:
+def __reaktome_additem__(self,
+                         key: Union[int, str],
+                         old: Any,
+                         new: Any,
+                         ) -> None:
+    LOGGER.debug('__reaktome_additem__(%s, %s, %s)', key, repr(old), repr(new))
     reaktiv8(new, key, parent=self, source='set')
     Changes.invoke(Change(self, key, old, new, source='set'))
 
 
-def __reaktome_discarditem__(self, key: str, old: Any, new: Any) -> None:
+def __reaktome_discarditem__(self,
+                             key: Union[int, str],
+                             old: Any,
+                             new: Any,
+                             ) -> None:
+    LOGGER.debug(
+        '__reaktome_discarditem__(%s, %s, %s)', key, repr(old), repr(new))
     deaktiv8(old, key, parent=self, source='set')
     Changes.invoke(Change(self, key, old, None, source='set'))
 
 
-def __reaktome_append__(self, new: Any) -> None:
-    i = len(self)
-    self.__reaktome_append__(new)
-    Changes.invoke(Change(self, i, None, new, source='item'))
-
-
 def reaktiv8(
     obj: Any,
-    name: Optional[str] = None,
+    name: Optional[Union[str, int]] = None,
     parent: Any = None,
     source: str = "attr",
 ) -> None:
@@ -227,11 +248,11 @@ def reaktiv8(
     Activate reaktome hooks on an object instance and register it for change
     tracking.
     """
-
     if name is None:
         name = obj.__class__.__name__
 
     if isinstance(obj, list):
+        LOGGER.debug('Activating list: %s', name)
         _r.patch_list(obj, {
             "__reaktome_setitem__": __reaktome_setitem__,
             "__reaktome_delitem__": __reaktome_delitem__,
@@ -239,6 +260,7 @@ def reaktiv8(
         Changes.add_backref(obj, BackRef(parent, obj, name, source="item"))
 
     elif isinstance(obj, set):
+        LOGGER.debug('Activating set: %s', name)
         _r.patch_set(obj, {
             "__reaktome_additem__": __reaktome_additem__,
             "__reaktome_discarditem__": __reaktome_discarditem__,
@@ -247,6 +269,7 @@ def reaktiv8(
         Changes.add_backref(obj, BackRef(parent, obj, name, source="item"))
 
     elif isinstance(obj, dict):
+        LOGGER.debug('Activating dict: %s', name)
         _r.patch_dict(obj, {
             "__reaktome_setitem__": __reaktome_setitem__,
             "__reaktome_delitem__": __reaktome_delitem__,
@@ -254,6 +277,7 @@ def reaktiv8(
         Changes.add_backref(obj, BackRef(parent, obj, name, source="item"))
 
     elif hasattr(obj, "__dict__"):
+        LOGGER.debug('Activating obj: %s', name)
         _r.patch_obj(obj, {
             "__reaktome_setattr__": __reaktome_setattr__,
             "__reaktome_delattr__": __reaktome_delattr__,
@@ -263,13 +287,13 @@ def reaktiv8(
         Changes.add_backref(obj, BackRef(parent, obj, name, source="attr"))
 
     else:
-        # unsupported type
+        LOGGER.info('Unsupported type: %s', name)
         return
 
 
 def deaktiv8(
     obj: Any,
-    name: Optional[str] = None,
+    name: Optional[Union[str, int]] = None,
     parent: Any = None,
     source: str = "attr",
 ) -> None:
@@ -277,27 +301,31 @@ def deaktiv8(
     Deactivate reaktome hooks on an object instance and remove it from change
     tracking.
     """
-
     if name is None:
         name = obj.__class__.__name__
 
     if isinstance(obj, list):
+        LOGGER.debug('Deactivating list: %s', name)
         _r.patch_list(obj, None)
         Changes.del_backref(obj, BackRef(parent, obj, name, source))
 
     elif isinstance(obj, set):
+        LOGGER.debug('Deactivating set: %s', name)
         _r.patch_set(obj, None)
         Changes.del_backref(obj, BackRef(parent, obj, name, source))
 
     elif isinstance(obj, dict):
+        LOGGER.debug('Deactivating dict: %s', name)
         _r.patch_dict(obj, None)
         Changes.del_backref(obj, BackRef(parent, obj, name, source))
 
     elif hasattr(obj, "__dict__"):
+        LOGGER.debug('Deactivating obj: %s', name)
         _r.patch_obj(obj, None)
         Changes.del_backref(obj, BackRef(parent, obj, name, source))
 
     else:
+        LOGGER.debug('Unsupported type: %s', name)
         return
 
 
