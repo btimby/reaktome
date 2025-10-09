@@ -5,6 +5,9 @@ setup(
     version="0.1.10",
     description="Advisory-only setattr hooks with veto support",
     packages=find_packages(include=["reaktome", "reaktome.*"]),
+    package_data={
+        'reaktome': ['py.typed'],
+    },
     ext_modules=[
         Extension(
             name="_reaktome",
