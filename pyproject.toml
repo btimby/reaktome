@@ -21,3 +21,9 @@ dev = [
 [build-system]
 requires = ["setuptools>=75.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.package-data]
+"pkgname" = ["py.typed"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
