@@ -14,6 +14,14 @@ class ReaktomeDictTestCase(unittest.TestCase):
         self.d["a"] = 1
         self.assertEqual(len(self.changes), 1)
 
+    def test_update_triggers_hook(self):
+        self.d.update({'a': 1})
+        self.assertEqual(len(self.changes), 1)
+
+    def test_update_kwargs_triggers_hook(self):
+        self.d.update(a=1)
+        self.assertEqual(len(self.changes), 1)
+
     def test_update_triggers_hooks(self):
         self.d.update({"x": 10, "y": 20})
         # expect 2 hooks, one per inserted key
