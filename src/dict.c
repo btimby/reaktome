@@ -131,14 +131,14 @@ build_args_with_self(PyObject *self, PyObject *args)
 }
 
 /* forward declarations for wrapper methoddefs (used when creating descriptors) */
-static PyObject *patched_dict_update(PyObject *self, PyObject *args);
+static PyObject *patched_dict_update(PyObject *self, PyObject *args, PyObject *kwargs);
 static PyObject *patched_dict_clear(PyObject *self, PyObject *Py_UNUSED(ignored));
 static PyObject *patched_dict_pop(PyObject *self, PyObject *arg);
 static PyObject *patched_dict_popitem(PyObject *self, PyObject *Py_UNUSED(ignored));
 static PyObject *patched_dict_setdefault(PyObject *self, PyObject *args);
 
 /* methoddef templates for descriptors we'll create in type dict */
-static PyMethodDef update_def = {"update", (PyCFunction)patched_dict_update, METH_VARARGS, "update (trampoline)"};
+static PyMethodDef update_def = {"update", (PyCFunction)patched_dict_update, METH_VARARGS | METH_KEYWORDS, "update (trampoline)"};
 static PyMethodDef clear_def  = {"clear",  (PyCFunction)patched_dict_clear,  METH_NOARGS,  "clear (trampoline)"};
 static PyMethodDef pop_def    = {"pop", (PyCFunction)patched_dict_pop, METH_VARARGS, "pop (trampoline)"};
 static PyMethodDef popitem_def= {"popitem",(PyCFunction)patched_dict_popitem,METH_NOARGS,  "popitem (trampoline)"};
@@ -146,7 +146,7 @@ static PyMethodDef setdefault_def = {"setdefault", (PyCFunction)patched_dict_set
 
 /* update(self, ...) wrapper: best-effort — attempt to call setitem hook for input items */
 static PyObject *
-patched_dict_update(PyObject *self, PyObject *args)
+patched_dict_update(PyObject *self, PyObject *args, PyObject *kwargs)
 {
     PyObject *res = NULL;
     /* Save a reference to the first arg if present so we can inspect it */
@@ -160,7 +160,7 @@ patched_dict_update(PyObject *self, PyObject *args)
     if (orig_update) {
         PyObject *call_args = build_args_with_self(self, args);
         if (!call_args) { Py_XDECREF(arg0); return NULL; }
-        res = PyObject_Call(orig_update, call_args, NULL);
+        res = PyObject_Call(orig_update, call_args, kwargs);
         Py_DECREF(call_args);
     } else {
         /* fallback to calling Python-level attribute from the type */
@@ -170,7 +170,7 @@ patched_dict_update(PyObject *self, PyObject *args)
             Py_XDECREF(arg0);
             return NULL;
         }
-        res = PyObject_Call(callable, args, NULL);
+        res = PyObject_Call(callable, args, kwargs);
         Py_DECREF(callable);
     }
 
@@ -198,6 +198,15 @@ patched_dict_update(PyObject *self, PyObject *args)
             }
             Py_DECREF(it);
             if (PyErr_Occurred()) PyErr_Clear();
+        }
+    }
+
+    /* Also handle keyword arguments: call hook for each key=value pair */
+    if (kwargs && PyDict_Check(kwargs)) {
+        PyObject *key, *value;
+        Py_ssize_t pos = 0;
+        while (PyDict_Next(kwargs, &pos, &key, &value)) {
+            call_hook_advisory_dict(self, "__reaktome_setitem__", key, NULL, value);
         }
     }
 
