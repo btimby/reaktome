@@ -173,7 +173,9 @@ class Changes:
 def __reaktome_setattr__(self, name: str, old: Any, new: Any) -> None:
     "Used by Obj."
     LOGGER.debug(
-        '__reaktome_setattr__(%s, %s, %s)', name, repr(old), repr(new))
+        '__reaktome_setattr__(%s, %s, %s, %s)',
+        repr(self), name, repr(old), repr(new),
+    )
     if name.startswith('_'):
         LOGGER.debug('Skipping private/protected attr: %s', name)
         return new
@@ -186,7 +188,9 @@ def __reaktome_setattr__(self, name: str, old: Any, new: Any) -> None:
 def __reaktome_delattr__(self, name: str, old: Any, new: Any) -> None:
     "Used by Obj."
     LOGGER.debug(
-        '__reaktome_delattr__(%s, %s, %s)', name, repr(old), repr(new))
+        '__reaktome_delattr__(%s, %s, %s, %s)',
+        repr(self), name, repr(old), repr(new),
+    )
     if name.startswith('_'):
         LOGGER.debug('Skipping private/protected attr: %s', name)
         return
@@ -200,7 +204,10 @@ def __reaktome_setitem__(self,
                          new: Any,
                          ) -> None:
     "Used by Dict, List."
-    LOGGER.debug('__reaktome_setitem__(%s, %s, %s)', key, repr(old), repr(new))
+    LOGGER.debug(
+        '__reaktome_setitem__(%s, %s, %s, %s)',
+        repr(self), key, repr(old), repr(new),
+    )
     reaktiv8(new, key, parent=self, source='item')
     deaktiv8(old, key, parent=self, source='item')
     Changes.invoke(Change(self, key, old, new, source='item'))
@@ -212,7 +219,10 @@ def __reaktome_delitem__(self,
                          new: Any,
                          ) -> None:
     "Used by Dict, List."
-    LOGGER.debug('__reaktome_delitem__(%s, %s, %s)', key, repr(old), repr(new))
+    LOGGER.debug(
+        '__reaktome_delitem__(%s, %s, %s, %s)',
+        repr(self), key, repr(old), repr(new),
+    )
     deaktiv8(old, key, parent=self, source='item')
     Changes.invoke(Change(self, key, old, None, source='item'))
 
@@ -222,7 +232,10 @@ def __reaktome_additem__(self,
                          old: Any,
                          new: Any,
                          ) -> None:
-    LOGGER.debug('__reaktome_additem__(%s, %s, %s)', key, repr(old), repr(new))
+    LOGGER.debug(
+        '__reaktome_additem__(%s, %s, %s, %s)',
+        repr(self), key, repr(old), repr(new),
+    )
     reaktiv8(new, key, parent=self, source='set')
     Changes.invoke(Change(self, key, old, new, source='set'))
 
@@ -233,7 +246,9 @@ def __reaktome_discarditem__(self,
                              new: Any,
                              ) -> None:
     LOGGER.debug(
-        '__reaktome_discarditem__(%s, %s, %s)', key, repr(old), repr(new))
+        '__reaktome_discarditem__(%s, %s, %s, %s)',
+        repr(self), key, repr(old), repr(new),
+    )
     deaktiv8(old, key, parent=self, source='set')
     Changes.invoke(Change(self, key, old, None, source='set'))
 

@@ -140,6 +140,8 @@ get_saved_method(PyTypeObject *tp, const char *name)
 static PyObject *
 tramp_append(PyObject *self, PyObject *arg)
 {
+    Py_ssize_t idx = PyList_GET_SIZE(self);
+
     PyObject *orig = get_saved_method(Py_TYPE(self), "append");
     PyObject *res;
 
@@ -156,9 +158,14 @@ tramp_append(PyObject *self, PyObject *arg)
 
     if (!res) return NULL; /* propagate exception */
 
-    /* after success, call setitem advisory with new value arg; key unknown for sequence */
-    call_hook_advisory_obj(self, "__reaktome_setitem__", NULL, NULL, arg);
+    PyObject *key = PyLong_FromSsize_t(idx);
+    if (!key)
+        return NULL;
 
+    /* after success, call setitem advisory with new value arg; key unknown for sequence */
+    call_hook_advisory_obj(self, "__reaktome_setitem__", key, NULL, arg);
+
+    Py_DECREF(key);
     Py_DECREF(res);
     Py_RETURN_NONE;
 }
@@ -167,6 +174,8 @@ tramp_append(PyObject *self, PyObject *arg)
 static PyObject *
 tramp_extend(PyObject *self, PyObject *iterable)
 {
+    Py_ssize_t idx = PyList_GET_SIZE(self);
+
     PyObject *orig = get_saved_method(Py_TYPE(self), "extend");
     PyObject *res;
 
@@ -186,8 +195,11 @@ tramp_extend(PyObject *self, PyObject *iterable)
         PyObject *it = PyObject_GetIter(iterable);
         if (it) {
             PyObject *item;
+            PyObject *key;
             while ((item = PyIter_Next(it))) {
-                call_hook_advisory_obj(self, "__reaktome_setitem__", NULL, NULL, item);
+                key = PyLong_FromSsize_t(idx++);
+                call_hook_advisory_obj(self, "__reaktome_setitem__", key, NULL, item);
+                Py_DECREF(key);
                 Py_DECREF(item);
             }
             Py_DECREF(it);
