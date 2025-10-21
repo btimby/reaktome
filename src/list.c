@@ -202,12 +202,17 @@ tramp_append(PyObject *self, PyObject *arg)
 static PyObject *
 tramp_extend(PyObject *self, PyObject *iterable)
 {
+    Py_ssize_t idx = PyList_GET_SIZE(self);
+
     PyObject *it = PyObject_GetIter(iterable);
     if (!it) return NULL;
     PyObject *item;
+    PyObject *key;
     while ((item = PyIter_Next(it))) {
+        key = PyLong_FromSsize_t(idx++);
         if (PyList_Append(self, item) < 0) { Py_DECREF(item); Py_DECREF(it); return NULL; }
-        call_hook_advisory(self, "__reaktome_setitem__", NULL, NULL, item);
+        call_hook_advisory(self, "__reaktome_setitem__", key, NULL, item);
+        Py_DECREF(key);
         Py_DECREF(item);
     }
     Py_DECREF(it);
