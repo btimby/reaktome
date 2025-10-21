@@ -2,7 +2,7 @@ from setuptools import setup, Extension, find_packages
 
 setup(
     name="reaktome",
-    version="0.1.15",
+    version="0.1.16",
     description="Advisory-only setattr hooks with veto support",
     packages=find_packages(include=["reaktome", "reaktome.*"]),
     package_data={
