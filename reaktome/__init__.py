@@ -3,6 +3,13 @@ import logging
 
 from fnmatch import fnmatch
 from typing import Any, Optional, Callable, Union
+from types import MethodType
+
+try:
+    from pydantic import BaseModel
+
+except ImportError:
+    BaseModel = None
 
 import _reaktome as _r  # type: ignore
 
@@ -253,6 +260,14 @@ def __reaktome_discarditem__(self,
     Changes.invoke(Change(self, key, old, None, source='set'))
 
 
+def __reaktome_deepcopy__(self, memo: Optional[dict] = None) -> BaseModel:
+    data = self.dict()
+    copy = self.__class__(**data)
+    if memo is not None:
+        memo[id(self)] = copy
+    return copy
+
+
 def reaktiv8(
     obj: Any,
     name: Optional[Union[str, int]] = None,
@@ -303,7 +318,9 @@ def reaktiv8(
 
     else:
         LOGGER.info('Unsupported type: %s', name)
-        return
+
+    if BaseModel and isinstance(obj, BaseModel):
+        obj.__dict__['__deepcopy__'] = MethodType(__reaktome_deepcopy__, obj)
 
 
 def deaktiv8(

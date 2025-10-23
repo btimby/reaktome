@@ -1,5 +1,6 @@
 import unittest
 
+from copy import deepcopy
 from typing import Any, Optional
 
 from unittest.mock import MagicMock
@@ -65,3 +66,6 @@ class ReaktomeListTestCase(unittest.TestCase):
         # clear should fire delitem for each element
         del_events = [c for c in self.changes if c.source == "item"]
         self.assertGreaterEqual(len(del_events), 3)
+
+    def test_deepcopy(self):
+        deepcopy(self.list)

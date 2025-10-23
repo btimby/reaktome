@@ -1,5 +1,7 @@
 import unittest
 
+from copy import deepcopy
+
 from reaktome import reaktiv8, Changes
 
 
@@ -35,3 +37,6 @@ class ReaktomeSetTestCase(unittest.TestCase):
     def test_discard_missing_does_not_raise(self):
         self.set.discard(123)
         self.assertEqual(len(self.changes), 1)
+
+    def test_deepcopy(self):
+        deepcopy(self.set)
