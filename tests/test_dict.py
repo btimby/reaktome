@@ -1,5 +1,7 @@
 import unittest
 
+from copy import deepcopy
+
 from reaktome import reaktiv8, Changes
 
 
@@ -51,3 +53,6 @@ class ReaktomeDictTestCase(unittest.TestCase):
         self.d.clear()
         # expect 3 hooks, one per removed key
         self.assertEqual(len(self.changes), 3)
+
+    def test_deepcopy(self):
+        deepcopy(self.d)

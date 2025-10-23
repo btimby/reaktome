@@ -1,5 +1,6 @@
 import unittest
 
+from copy import deepcopy
 from typing import Any, Optional
 
 from unittest.mock import MagicMock
@@ -45,6 +46,9 @@ class ReaktomeTestCase(unittest.TestCase):
             {'foo': None, 'id': 'abc123', 'name': 'foo'},
             self.bar.model_dump(),
         )
+
+    def test_deepcopy(self):
+        deepcopy(self.bar)
 
 
 class ReaktomeCollectionTestCase(unittest.TestCase):

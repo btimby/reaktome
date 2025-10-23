@@ -1,5 +1,7 @@
 import unittest
 
+from copy import deepcopy
+
 from reaktome import reaktiv8, Changes
 
 
@@ -25,3 +27,6 @@ class ReaktomeObjTestCase(unittest.TestCase):
         del self.obj.name
         self.assertFalse(hasattr(self.obj, "name"))
         self.assertTrue(any(c.source == "attr" for c in self.changes))
+
+    def test_deepcopy(self):
+        deepcopy(self.obj)
