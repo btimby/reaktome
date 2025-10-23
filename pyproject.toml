@@ -1,6 +1,6 @@
 [project]
 name = "reaktome"
-version = "0.1.17"
+version = "0.1.18"
 description = "Advisory-only setattr hooks with veto support"
 readme = "README.md"
 requires-python = ">=3.12"
