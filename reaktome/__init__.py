@@ -263,7 +263,11 @@ def __reaktome_discarditem__(self,
 
 def __reaktome_deepcopy__(self, memo: Optional[dict] = None) -> Any:
     data = self.dict()
-    copy = self.__class__(**data)
+    if isinstance(data, list):
+        # Might be pydantic_collections subclass.
+        copy = self.__class__(data)
+    else:
+        copy = self.__class__(**data)
     if memo is not None:
         memo[id(self)] = copy
     return copy
