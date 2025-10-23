@@ -5,13 +5,14 @@ from fnmatch import fnmatch
 from typing import Any, Optional, Callable, Union
 from types import MethodType
 
+import _reaktome as _r  # type: ignore
+
+BaseModel: Optional[type]
 try:
     from pydantic import BaseModel
 
 except ImportError:
     BaseModel = None
-
-import _reaktome as _r  # type: ignore
 
 
 LOGGER = logging.getLogger(__name__)
@@ -104,7 +105,7 @@ class ChangeFilter:
 class Changes:
     __instances__: dict[int, 'Changes'] = {}
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.backrefs: set[BackRef] = set()
         self.callbacks: list[
             tuple[Callable[[Any], bool], Callable[[Any], Any]]
@@ -260,7 +261,7 @@ def __reaktome_discarditem__(self,
     Changes.invoke(Change(self, key, old, None, source='set'))
 
 
-def __reaktome_deepcopy__(self, memo: Optional[dict] = None) -> BaseModel:
+def __reaktome_deepcopy__(self, memo: Optional[dict] = None) -> Any:
     data = self.dict()
     copy = self.__class__(**data)
     if memo is not None:
@@ -319,7 +320,7 @@ def reaktiv8(
     else:
         LOGGER.info('Unsupported type: %s', name)
 
-    if BaseModel and isinstance(obj, BaseModel):
+    if BaseModel is not None and isinstance(obj, BaseModel):
         obj.__dict__['__deepcopy__'] = MethodType(__reaktome_deepcopy__, obj)
 
 
