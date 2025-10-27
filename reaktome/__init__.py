@@ -15,6 +15,14 @@ except ImportError:
     BaseModel = None
 
 
+BaseCollectionModel: Optional[type]
+try:
+    from pydantic_collections import BaseCollectionModel  # type: ignore
+
+except ImportError:
+    BaseCollectionModel = None
+
+
 LOGGER = logging.getLogger(__name__)
 LOGGER.addHandler(logging.NullHandler())
 
@@ -34,6 +42,9 @@ class Change:
         self.old = old
         self.new = new
         self.source = source
+
+    def __repr__(self) -> str:
+        return f'⚡ {self.key}: {repr(self.old)} → {repr(self.new)}'
 
 
 class BackRef:
@@ -111,6 +122,12 @@ class Changes:
             tuple[Callable[[Any], bool], Callable[[Any], Any]]
         ] = []
 
+    def __repr__(self):
+        backrefs = ', '.join([
+            f'{id(br.parent)} → {id(br.obj)}' for br in list(self.backrefs)])
+        callbacks = ', '.join(cb[1].__name__ for cb in self.callbacks)
+        return f'{id(self)}: [{backrefs}] [{callbacks}]'
+
     def _add_backref(self, backref: BackRef) -> None:
         self.backrefs.add(backref)
 
@@ -118,8 +135,7 @@ class Changes:
         self.backrefs.discard(backref)
 
     def _invoke(self, change: Change) -> None:
-        LOGGER.debug(
-            f'⚡ {change.key}: {repr(change.old)} → {repr(change.new)}')
+        LOGGER.debug(repr(change))
         for r in self.backrefs:
             try:
                 r(change)
@@ -262,7 +278,10 @@ def __reaktome_discarditem__(self,
 
 
 def __reaktome_deepcopy__(self, memo: Optional[dict] = None) -> Any:
-    data = self.dict()
+    if callable(getattr(self, 'model_dump', None)):
+        data = self.model_dump()
+    else:
+        data = self.dict()
     if isinstance(data, list):
         # Might be pydantic_collections subclass.
         copy = self.__class__(data)
@@ -278,6 +297,7 @@ def reaktiv8(
     name: Optional[Union[str, int]] = None,
     parent: Any = None,
     source: str = "attr",
+    seen: Optional[set] = None,
 ) -> None:
     """
     Activate reaktome hooks on an object instance and register it for change
@@ -286,33 +306,46 @@ def reaktiv8(
     if name is None:
         name = obj.__class__.__name__
 
+    seen = seen if seen else set()
+    if id(obj) in seen:
+        LOGGER.debug('Not activating already activated object: %s', repr(obj))
+        return
+    seen.add(id(obj))
+
     if isinstance(obj, list):
-        LOGGER.debug('Activating list: %s', name)
+        LOGGER.debug('Activating list: %s', repr(obj))
         _r.patch_list(obj, {
             "__reaktome_setitem__": __reaktome_setitem__,
             "__reaktome_delitem__": __reaktome_delitem__,
         })
         Changes.add_backref(obj, BackRef(parent, obj, name, source="item"))
+        LOGGER.debug("Activating list's children")
+        for i, child in enumerate(obj):
+            reaktiv8(child, name=i, parent=obj, source='item', seen=seen)
 
     elif isinstance(obj, set):
-        LOGGER.debug('Activating set: %s', name)
+        LOGGER.debug('Activating set: %s', repr(obj))
         _r.patch_set(obj, {
             "__reaktome_additem__": __reaktome_additem__,
             "__reaktome_discarditem__": __reaktome_discarditem__,
             "__reaktome_delitem__": __reaktome_delitem__,
         })
         Changes.add_backref(obj, BackRef(parent, obj, name, source="item"))
+        for child in obj:
+            reaktiv8(child, parent=obj, source='item', seen=seen)
 
     elif isinstance(obj, dict):
-        LOGGER.debug('Activating dict: %s', name)
+        LOGGER.debug('Activating dict: %s', repr(obj))
         _r.patch_dict(obj, {
             "__reaktome_setitem__": __reaktome_setitem__,
             "__reaktome_delitem__": __reaktome_delitem__,
         })
         Changes.add_backref(obj, BackRef(parent, obj, name, source="item"))
+        for key, child in obj.items():
+            reaktiv8(child, name=key, parent=obj, source='item', seen=seen)
 
     elif hasattr(obj, "__dict__"):
-        LOGGER.debug('Activating obj: %s', name)
+        LOGGER.debug('Activating obj: %s', repr(obj))
         _r.patch_obj(obj, {
             "__reaktome_setattr__": __reaktome_setattr__,
             "__reaktome_delattr__": __reaktome_delattr__,
@@ -320,9 +353,17 @@ def reaktiv8(
             "__reaktome_delitem__": __reaktome_delitem__,
         })
         Changes.add_backref(obj, BackRef(parent, obj, name, source="attr"))
+        for name, value in obj.__dict__.items():
+            if not isinstance(name, int) and name.startswith('_'):
+                LOGGER.debug('Skipping private/protected attr: %s', name)
+                continue
+            if ((BaseCollectionModel is not None and
+                 isinstance(obj, BaseCollectionModel) and name == 'root')):
+                continue
+            reaktiv8(value, name=name, parent=obj, source='attr', seen=seen)
 
     else:
-        LOGGER.info('Unsupported type: %s', name)
+        LOGGER.info('Unsupported type: %s', repr(obj))
 
     if BaseModel is not None and isinstance(obj, BaseModel):
         obj.__dict__['__deepcopy__'] = MethodType(__reaktome_deepcopy__, obj)
@@ -369,9 +410,12 @@ def deaktiv8(
 class Reaktome:
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        reaktiv8(self, parent=None, name=self.__class__.__name__)
+        self.__reaktiv8__()
 
     def __post_init__(self) -> None:
+        self.__reaktiv8__()
+
+    def __reaktiv8__(self):
         reaktiv8(self, parent=None, name=self.__class__.__name__)
 
 
