@@ -310,7 +310,6 @@ def reaktiv8(
     if id(obj) in seen:
         LOGGER.debug('Not activating already activated object: %s', repr(obj))
         return
-    seen.add(id(obj))
 
     if isinstance(obj, list):
         LOGGER.debug('Activating list: %s', repr(obj))
@@ -319,7 +318,7 @@ def reaktiv8(
             "__reaktome_delitem__": __reaktome_delitem__,
         })
         Changes.add_backref(obj, BackRef(parent, obj, name, source="item"))
-        LOGGER.debug("Activating list's children")
+        seen.add(id(obj))
         for i, child in enumerate(obj):
             reaktiv8(child, name=i, parent=obj, source='item', seen=seen)
 
@@ -331,6 +330,7 @@ def reaktiv8(
             "__reaktome_delitem__": __reaktome_delitem__,
         })
         Changes.add_backref(obj, BackRef(parent, obj, name, source="item"))
+        seen.add(id(obj))
         for child in obj:
             reaktiv8(child, parent=obj, source='item', seen=seen)
 
@@ -341,6 +341,7 @@ def reaktiv8(
             "__reaktome_delitem__": __reaktome_delitem__,
         })
         Changes.add_backref(obj, BackRef(parent, obj, name, source="item"))
+        seen.add(id(obj))
         for key, child in obj.items():
             reaktiv8(child, name=key, parent=obj, source='item', seen=seen)
 
@@ -353,6 +354,7 @@ def reaktiv8(
             "__reaktome_delitem__": __reaktome_delitem__,
         })
         Changes.add_backref(obj, BackRef(parent, obj, name, source="attr"))
+        seen.add(id(obj))
         for name, value in obj.__dict__.items():
             if not isinstance(name, int) and name.startswith('_'):
                 LOGGER.debug('Skipping private/protected attr: %s', name)
