@@ -182,7 +182,7 @@ tramp_sq_ass_slice(PyObject *self, Py_ssize_t i, Py_ssize_t j, PyObject *v)
 static PyObject *
 tramp_append(PyObject *self, PyObject *arg)
 {
-    fprintf("Reaktome tramp_append()");
+    fprintf(stderr, "Reaktome tramp_append()\n");
 
     Py_ssize_t idx = PyList_GET_SIZE(self);
 
@@ -204,7 +204,7 @@ tramp_append(PyObject *self, PyObject *arg)
 static PyObject *
 tramp_extend(PyObject *self, PyObject *iterable)
 {
-    fprintf("Reaktome tramp_extend()");
+    fprintf(stderr, "Reaktome tramp_extend()\n");
 
     Py_ssize_t idx = PyList_GET_SIZE(self);
 
