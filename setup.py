@@ -9,7 +9,7 @@ python_ldargs = [flag for flag in python_ldflags.split() if flag]
 
 setup(
     name="reaktome",
-    version="0.1.21",
+    version="0.1.22",
     description="Advisory-only setattr hooks with veto support",
     packages=find_packages(include=["reaktome", "reaktome.*"]),
     package_data={
